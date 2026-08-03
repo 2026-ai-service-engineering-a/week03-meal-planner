@@ -50,8 +50,8 @@ def _source_lines(plan: MealPlan, foods: dict[str, dict]) -> str:
         if food is None:
             lines.append(f"{code}: 원본 목록에 없음 — 존재하지 않는 음식")
             continue
-        lines.append(
-            f"{food['food_name']} 100g당 {food['energy_kcal_100g']}kcal, "
+        lines.append(  # food_code를 함께 줘야 검증자가 코드 실존을 대조할 수 있다
+            f"{food['food_name']}({food['food_code']}) 100g당 {food['energy_kcal_100g']}kcal, "
             f"단백질 {food['protein_g_100g']}g, Na {food['sodium_mg_100g']}mg, "
             f"1인분량 {food['serving_g']}g"
         )

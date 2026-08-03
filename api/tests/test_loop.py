@@ -133,10 +133,18 @@ def test_merge_keeps_validator_wording_when_code_confirms():
     assert merged.violations == [LLM_VIOLATION]
 
 
-def test_merge_drops_unconfirmed_arithmetic_claims():
-    """검증자가 "한도 내"까지 위반으로 보고하는 노이즈는 재계산 불일치로 폐기된다."""
-    noise = LLM_VIOLATION.model_copy(update={"day": "수", "evidence": "765mg < 800mg (한도 내)"})
-    merged = merge_reports(ValidationReport(passed=False, violations=[noise]), [])
+def test_merge_drops_unconfirmed_validator_claims():
+    """코드 재계산으로 확인되지 않는 검증자 주장은 유형 불문 폐기된다.
+
+    리허설 실물: "765mg < 800mg (한도 내)"를 제약_위반으로, "주 2회 이하"인
+    고등어구이 2회를 중복으로 보고하는 노이즈가 수정 루프를 오염시켰다.
+    """
+    noise = [
+        LLM_VIOLATION.model_copy(update={"day": "수", "evidence": "765mg < 800mg (한도 내)"}),
+        LLM_VIOLATION.model_copy(update={"type": "중복", "evidence": "고등어구이 주 2회 반복 제공"}),
+        LLM_VIOLATION.model_copy(update={"type": "존재하지_않는_음식", "evidence": "원본 목록에 code 없음"}),
+    ]
+    merged = merge_reports(ValidationReport(passed=False, violations=noise), [])
     assert merged.passed is True
     assert merged.violations == []
 

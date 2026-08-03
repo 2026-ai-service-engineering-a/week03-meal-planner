@@ -22,24 +22,18 @@ from schemas.validation import AttemptRecord, PlanResponse, ValidationReport, Vi
 MAX_ATTEMPTS = 3  # 루프 가드 — 파이프라인에도 상한이 있다 (2주차 에이전트 루프 가드의 재회)
 
 
-CODE_ARBITER_TYPES = {"환산_오류", "제약_위반"}  # 산수·제약 판정 — 코드 재계산이 최종 심판
-
-
 def merge_reports(llm_report: ValidationReport, code_violations: list[Violation]) -> ValidationReport:
-    """검증자 판정과 코드 재계산을 병합한다.
+    """검증자 판정과 코드 재계산을 병합한다 — 판정은 코드가, 문장은 검증자가.
 
-    같은 (유형, 요일, 코드)면 검증자 것을 남긴다 — 해석·심각도·수정 제안의 품질이
-    LLM 검증자의 값어치다. 단, 산수·제약 유형은 코드 재계산으로 확인될 때만
-    인정한다 (누가 맞나? 산수는 코드가 맞다 — 검증자가 "한도 내"를 위반이라
-    보고하는 노이즈가 수정 루프를 오염시키는 것을 막는다). 코드만 잡은 위반은
-    뒤에 붙는다.
+    네 위반 유형(존재·환산·제약·중복)은 전부 코드가 재검 가능하므로, 검증자의
+    주장은 코드 재계산으로 확인될 때만 인정한다 (누가 맞나? 산수는 코드가 맞다).
+    리허설에서 검증자가 "한도 내"를 위반으로, "주 2회 이하"를 중복으로 보고하는
+    노이즈가 수정 루프를 오염시키는 것을 봤다 — 이 필터가 그 방어다.
+    같은 (유형, 요일, 코드)면 검증자 것을 남긴다: 해석·심각도·수정 제안의 품질이
+    LLM 검증자의 값어치다. 코드만 잡은 위반은 뒤에 붙는다.
     """
     code_keys = {(v.type, v.day, v.food_code) for v in code_violations}
-    kept = [
-        v
-        for v in llm_report.violations
-        if v.type not in CODE_ARBITER_TYPES or (v.type, v.day, v.food_code) in code_keys
-    ]
+    kept = [v for v in llm_report.violations if (v.type, v.day, v.food_code) in code_keys]
     dropped = len(llm_report.violations) - len(kept)
 
     seen = {(v.type, v.day, v.food_code) for v in kept}
