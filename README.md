@@ -111,8 +111,53 @@ grep 연어 data/foods.json                                       # 환각 확�
 | 형식 붕괴 (인사말 포장, 키 이름 변동) | instructor 스키마 강제 (1회전) |
 | 수치 창작 ("약 200mg") | 데이터 대조·크로스체크 (2회전) |
 
+## 파이프라인 시연 (v1.0)
+
+**위반을 유도하는 호출** — 국물 요리 유도로 나트륨 위반이 거의 확실히 발생하고,
+수정 루프가 연출 없이 진짜로 돕니다:
+
+```bash
+curl -s localhost:8000/plan -X POST -H 'Content-Type: application/json' \
+  -d '{"kcal_min":500,"kcal_max":800,"sodium_limit_mg":800,"protein_min_g":25,
+       "request":"국물 요리 위주로 짜줘"}' | jq '{attempts, passed: .report.passed, history}'
+```
+
+응답의 `attempts`·`history`가 루프가 돌았다는 증거입니다. 1차에서 검증자가
+잡고("순대국밥 470mg/100g × 900g = 4,230mg > 800mg"), 2차에서 통과합니다.
+
+**모델이 실제로 본 것과 뱉은 것** (개발 모드 = LOG_LEVEL=debug):
+
+```bash
+docker compose logs api | grep -A 40 "PLANNER PROMPT"
+docker compose logs api | grep -A 30 "VALIDATOR PROMPT"
+docker compose logs api | grep -A 15 "PLANNER PROMPT (revision)"   # 위반이 계획자에 되돌아간 실물
+docker compose logs api | grep -B 2 -A 8 "INSTRUCTOR RETRY"        # 형식 층 실패 → 자동 재시도
+```
+
+**모델 조합 교체 — env만으로** (코드 diff 없음이 이 시연의 증거):
+
+```bash
+# .env: PLANNER_MODEL=openai/gpt-... → PLANNER_MODEL=gemini/gemini-...
+docker compose up -d --force-recreate api   # env 변경은 재기동으로 반영
+docker compose logs api | grep "LLM CALL"   # role=planner model=gemini/... 확인
+```
+
+**폴백 — 모의 장애**: 검증자가 죽어도 안전 검사는 계속됩니다.
+
+```bash
+# .env: VALIDATOR_MODEL=anthropic/claude-... → VALIDATOR_MODEL=anthropic/no-such-model
+docker compose up -d --force-recreate api
+curl -s localhost:8000/plan -X POST -H 'Content-Type: application/json' \
+  -d '{"kcal_min":500,"kcal_max":800,"sodium_limit_mg":800,"protein_min_g":25,"request":""}' \
+  | jq '.report.passed'                       # 그래도 검증이 된다
+docker compose logs api | grep -A 3 "FALLBACK"
+```
+
+응답은 정상이고 로그에만 장애의 흔적이 남습니다. 사용자는 프로바이더 장애를
+모릅니다 — 폴백은 사치가 아니라 **안전 검사의 가용성**입니다. 확인 후 원복하세요.
+
 ## 테스트
 
 ```bash
-docker compose exec api uv run pytest -v
+docker compose exec api uv run pytest -v    # 환산·크로스체크·루프 — LLM 없이 도는 안전망
 ```
