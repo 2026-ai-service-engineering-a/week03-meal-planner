@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# 환경변수 — 키는 절대 커밋하지 않는다
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# 데이터 원본 (K-FIND 엑셀 다운로드 파일) — 스냅샷(foods.json)만 커밋한다
+data/*.xlsx

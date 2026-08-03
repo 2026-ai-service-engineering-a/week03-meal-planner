@@ -1,0 +1,30 @@
+# 공통 정의 — api + ui 두 서비스. DB는 없다 (2주차보다 가볍다).
+#   실행 모드: docker compose up --build
+#   개발 모드: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+services:
+  api:
+    build: ./api
+    container_name: meal-planner-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false # v0.1 목 API는 LLM 키 없이도 뜬다
+    environment:
+      TZ: Asia/Seoul
+    volumes:
+      # 데이터 스냅샷과 0단 예제는 레포 루트에 있고, 컨테이너에는 읽기 전용으로 들어간다
+      - ./data:/app/data:ro
+      - ./examples:/app/examples:ro
+
+  ui:
+    build: ./ui
+    container_name: meal-planner-ui
+    ports:
+      - "8501:8501"
+    environment:
+      TZ: Asia/Seoul
+      # compose 네트워크에서 서비스 이름(api)이 곧 호스트명이다 (2주차 app↔db와 같은 원리)
+      API_BASE_URL: http://api:8000
+    depends_on:
+      - api
