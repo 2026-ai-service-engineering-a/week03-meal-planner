@@ -67,9 +67,16 @@ curl -s localhost:8000/plan -X POST -H 'Content-Type: application/json' \
 - 영양값은 **100g 기준**이고 `serving_g`(1인분량)가 따로 있습니다. 사람이 먹는
   단위로 환산해야 하며, 이 환산이 LLM이 정확히 틀리는 지점입니다
   (예: 순대국밥 나트륨 470mg/100g × 1인분 900g = **4,230mg** — WHO 하루 권장의 2배)
-- 원본에서 재생성: `scripts/prepare_data.py` 참고. 파일 다운로드 방식이라
-  Open-API 제한과 무관합니다. **재생성 시 다운로드 시점의 DB 버전·일자를 이
-  절에 기록하세요** — 데이터에도 버전이 있습니다
+- 원본에서 재생성: 음식DB 엑셀을 `data/`에 내려받고 (파일 다운로드 방식이라
+  Open-API 제한과 무관합니다)
+
+  ```bash
+  docker compose run --rm prepare-data data/음식DB.xlsx
+  ```
+
+  호스트에 파이썬·pandas가 없어도 됩니다 — 전처리도 compose로 돕니다.
+  **재생성 시 다운로드 시점의 DB 버전·일자를 이 절에 기록하세요** —
+  데이터에도 버전이 있습니다
 - 현재 스냅샷: 음식DB 규격 기반 시연용 경량판 (2026-08-03 생성)
 
 ## 저장소 구조

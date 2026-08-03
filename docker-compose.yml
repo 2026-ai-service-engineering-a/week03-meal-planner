@@ -17,6 +17,18 @@ services:
       - ./data:/app/data:ro
       - ./examples:/app/examples:ro
 
+  # 데이터 전처리 일회성 도구 — up으로는 안 뜨고, 이름을 지목해 run으로만 돈다.
+  #   docker compose run --rm prepare-data data/음식DB.xlsx
+  # K-FIND 음식DB 엑셀을 data/에 내려받아 두면 volume으로 컨테이너에 보인다.
+  prepare-data:
+    profiles: ["tools"]
+    build: ./api # api와 같은 uv 이미지 재사용 — pandas·openpyxl은 실행 시에만 얹는다
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - ./data:/app/data # 스냅샷(foods.json)을 다시 쓰는 유일한 자리라 여기만 rw
+    entrypoint:
+      ["uv", "run", "--with", "pandas", "--with", "openpyxl", "python", "scripts/prepare_data.py"]
+
   ui:
     build: ./ui
     container_name: meal-planner-ui
