@@ -19,8 +19,58 @@ import streamlit as st
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 SEVERITY_ICON = {"high": "🔴", "medium": "🟠", "low": "🟡"}
+ROLE_KR = {"planner": "계획자", "validator": "검증자"}
+ROLE_ICON = {"planner": "📝", "validator": "🔍"}
+PREVIEW_CHARS = 700  # 호출 기록 미리보기 길이 — 전문은 "확대해서 보기"로
 
 st.set_page_config(page_title="한 주 밥상", page_icon="🍚", layout="wide")
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def fetch_config() -> dict | None:
+    """역할별 모델 구성 — UI는 env를 모르고, API(/config)가 진실의 원천이다."""
+    try:
+        return requests.get(f"{API_BASE_URL}/config", timeout=5).json()
+    except requests.RequestException:
+        return None
+
+
+def call_stats(call: dict) -> str:
+    """호출 1건의 토큰·비용·소요시간 한 줄."""
+    parts = []
+    if call.get("prompt_tokens") is not None:
+        parts.append(f"입력 {call['prompt_tokens']:,} 토큰")
+    if call.get("completion_tokens") is not None:
+        parts.append(f"출력 {call['completion_tokens']:,} 토큰")
+    if call.get("cost_usd") is not None:
+        parts.append(f"${call['cost_usd']:.4f}")
+    if call.get("duration_s") is not None:
+        parts.append(f"{call['duration_s']:.1f}s")
+    return " · ".join(parts) or "사용량 정보 없음"
+
+
+def call_title(index: int, call: dict) -> str:
+    role = ROLE_KR.get(call["role"], call["role"])
+    icon = ROLE_ICON.get(call["role"], "🤖")
+    revision = " · 재계획" if call.get("label") else ""
+    return f"{icon} {index}. {role}{revision} — 시도 {call.get('attempt') or '?'} · `{call['model']}` · {call_stats(call)}"
+
+
+def preview(text: str, limit: int = PREVIEW_CHARS) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n… (이하 생략 — 전문 {len(text):,}자는 '확대해서 보기'로)"
+
+
+@st.dialog("LLM 호출 전문", width="large")
+def show_call_zoom(index: int, call: dict) -> None:
+    """확대해서 보기 — 입력·출력 전문을 모달로 크게 띄운다."""
+    st.markdown(call_title(index, call))
+    for msg in call["prompt"]:
+        st.markdown(f"**입력 — {msg['role']}** ({len(msg['content']):,}자)")
+        st.code(msg["content"], language=None)
+    st.markdown(f"**출력 — 원문** ({len(call['raw_output']):,}자)")
+    st.code(call["raw_output"], language="json")
 
 
 def set_request_text(text: str) -> None:
@@ -44,6 +94,14 @@ with st.sidebar:
     sodium_limit_mg = st.number_input("나트륨 한도 (mg/끼)", 200, 3000, 800, step=100)
     protein_min_g = st.number_input("단백질 최소 (g/끼)", 0, 100, 25, step=5)
     st.divider()
+    config = fetch_config()
+    if config:
+        st.markdown("**모델 구성** — env가 곧 조직도")
+        st.markdown(f"📝 계획자: `{config['planner_model'] or '(미설정)'}`")
+        st.markdown(f"🔍 검증자: `{config['validator_model'] or '(미설정)'}`")
+        if config["validator_fallbacks"]:
+            st.markdown("↩️ 폴백: " + " → ".join(f"`{m}`" for m in config["validator_fallbacks"]))
+        st.caption("두 역할은 일부러 다른 회사입니다 — 만든 쪽이 검사하면 안 되니까요. 교체는 .env 수정 + 재기동뿐.")
     st.caption(f"API: `{API_BASE_URL}`")
 
 st.text_input(
@@ -223,3 +281,24 @@ if history:
             st.markdown(f"**시도 {h['attempt']}** — {state}")
             if h.get("violations"):
                 render_violations(h["violations"], f"h{h['attempt']}")
+
+# LLM 호출 기록 — 각 요청의 입력·출력 전문 (개발 참고용, 기본 접힘)
+llm_calls = data.get("llm_calls") or []
+if llm_calls:
+    total_in = sum(call.get("prompt_tokens") or 0 for call in llm_calls)
+    total_out = sum(call.get("completion_tokens") or 0 for call in llm_calls)
+    total_cost = sum(call.get("cost_usd") or 0 for call in llm_calls)
+    st.subheader("LLM 호출 기록")
+    st.caption(
+        f"개발 참고용 — 총 {len(llm_calls)}건 · 입력 {total_in:,} 토큰 · 출력 {total_out:,} 토큰 · "
+        f"약 ${total_cost:.4f}. 모델이 보는 것은 객체가 아니라 결국 이 텍스트입니다."
+    )
+    for i, call in enumerate(llm_calls, start=1):
+        with st.expander(call_title(i, call), expanded=False):
+            if st.button("🔎 확대해서 보기 — 입력·출력 전문", key=f"zoom_{i}"):
+                show_call_zoom(i, call)
+            for msg in call["prompt"]:
+                st.markdown(f"**입력 — {msg['role']}** ({len(msg['content']):,}자)")
+                st.code(preview(msg["content"]), language=None)
+            st.markdown(f"**출력 — 원문** ({len(call['raw_output']):,}자)")
+            st.code(preview(call["raw_output"]), language="json")

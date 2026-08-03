@@ -6,6 +6,7 @@ LLM 호출 지점은 정확히 두 곳(계획자·검증자)뿐이고, 둘은 �
 """
 
 import json
+import os
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -20,6 +21,23 @@ app = FastAPI(title="한 주 밥상 — 식단 플래너 API", version="1.0.0")
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/config")
+def config() -> dict:
+    """역할별 모델 구성 — env가 곧 조직도이고, UI 사이드바가 이걸 그대로 보여준다.
+
+    키는 절대 내보내지 않는다. 모델 문자열은 비밀이 아니라 정책이다.
+    """
+    return {
+        "planner_model": os.environ.get("PLANNER_MODEL", ""),
+        "validator_model": os.environ.get("VALIDATOR_MODEL", ""),
+        "validator_fallbacks": [
+            model.strip()
+            for model in os.environ.get("VALIDATOR_FALLBACKS", "").split(",")
+            if model.strip()
+        ],
+    }
 
 
 @app.post("/plan")

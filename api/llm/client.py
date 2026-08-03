@@ -17,11 +17,14 @@ LOG_LEVEL=debug면 조립된 프롬프트 전문·모델 원출력·재시도 �
 import logging
 import os
 import sys
+import time
 
 import instructor
 import litellm
 from dotenv import load_dotenv
 from pydantic import BaseModel
+
+from schemas.llm import LlmCall
 
 # 호스트에서 직접 실행할 때 .env를 읽는다 (컨테이너는 compose의 env_file로 주입)
 load_dotenv()
@@ -94,13 +97,17 @@ def model_chain(role: str) -> list[str]:
     return chain
 
 
+def _cost(response) -> float | None:
+    try:
+        return litellm.completion_cost(completion_response=response)
+    except Exception:
+        return None  # 비용표에 없는 모델이면 토큰만 남긴다
+
+
 def _log_usage(role: str, model: str, response) -> None:
     """매 호출의 모델·토큰·비용을 남긴다 — 관측이 없으면 비용은 월말 청구서로 배운다."""
     usage = getattr(response, "usage", None)
-    try:
-        cost = litellm.completion_cost(completion_response=response)
-    except Exception:
-        cost = None  # 비용표에 없는 모델이면 토큰만 남긴다
+    cost = _cost(response)
     log.info(
         "LLM CALL ─ role=%s model=%s prompt_tokens=%s completion_tokens=%s cost=%s",
         role,
@@ -116,8 +123,13 @@ def structured_complete[T: BaseModel](
     response_model: type[T],
     messages: list[dict],
     label: str = "",
+    recorder: list[LlmCall] | None = None,
 ) -> T:
-    """역할의 모델 체인으로 structured output을 받는다. 프로바이더가 죽으면 폴백."""
+    """역할의 모델 체인으로 structured output을 받는다. 프로바이더가 죽으면 폴백.
+
+    recorder가 있으면 성공한 호출의 입력·출력 전문과 토큰·비용을 기록한다 —
+    로그에만 있던 관측 데이터가 응답까지 올라가는 통로다.
+    """
     prompt_tag = f"{role.upper()} PROMPT{f' {label}' if label else ''}"
     for message in messages:
         log.debug("%s ─ %s:\n%s", prompt_tag, message["role"], message["content"])
@@ -130,6 +142,7 @@ def structured_complete[T: BaseModel](
         if i > 0:
             log.info("FALLBACK ─ %s → %s  (%s_FALLBACKS[%d])", role, model, role.upper(), i - 1)
         try:
+            started = time.monotonic()
             result, completion = _client.chat.completions.create_with_completion(
                 model=model,
                 response_model=response_model,
@@ -137,6 +150,21 @@ def structured_complete[T: BaseModel](
                 max_retries=MAX_SCHEMA_RETRIES,
             )
             _log_usage(role, model, completion)
+            if recorder is not None:
+                usage = getattr(completion, "usage", None)
+                recorder.append(
+                    LlmCall(
+                        role=role,
+                        model=model,
+                        label=label,
+                        prompt=[{"role": m["role"], "content": m["content"]} for m in messages],
+                        raw_output=_raw_text(completion),
+                        prompt_tokens=getattr(usage, "prompt_tokens", None),
+                        completion_tokens=getattr(usage, "completion_tokens", None),
+                        cost_usd=_cost(completion),
+                        duration_s=round(time.monotonic() - started, 2),
+                    )
+                )
             return result
         except Exception as exc:  # 이 프로바이더가 죽으면 다음 폴백으로
             log.warning("LLM CALL FAILED ─ role=%s model=%s (%s)", role, model, type(_root_cause(exc)).__name__)

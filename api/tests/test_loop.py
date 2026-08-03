@@ -1,6 +1,7 @@
 """수정 루프·병합 테스트 — LLM 없이 루프와 심판의 기계 동작만 검증한다."""
 
 from pipeline.loop import MAX_ATTEMPTS, merge_reports, run_pipeline, run_pipeline_events
+from schemas.llm import LlmCall
 from schemas.meal import DAYS, Meal, MealPlan, PlanRequest
 from schemas.validation import PlanAudit, ValidationReport, Violation
 
@@ -44,10 +45,14 @@ def wire(monkeypatch, llm_reports: list[ValidationReport], code_rounds: list[lis
     """계획자·검증자·크로스체크를 전부 가짜로 갈아끼운다 — 루프만 남긴다."""
     calls = {"plan": 0, "revision_violations": []}
 
-    def fake_plan(req, candidates, violations=None, previous=None):
+    def fake_plan(req, candidates, violations=None, previous=None, recorder=None):
         calls["plan"] += 1
         if violations:
             calls["revision_violations"].append(violations)
+        if recorder is not None:  # 실제 client처럼 호출 기록을 남긴다
+            recorder.append(
+                LlmCall(role="planner", model="test/planner", prompt=[{"role": "user", "content": "p"}], raw_output="{}")
+            )
         return fake_meal_plan()
 
     stub_audit = PlanAudit(
@@ -61,7 +66,7 @@ def wire(monkeypatch, llm_reports: list[ValidationReport], code_rounds: list[lis
     llm_iter = iter(llm_reports)
     code_iter = iter(code_rounds)
     monkeypatch.setattr("pipeline.loop.plan_meals", fake_plan)
-    monkeypatch.setattr("pipeline.loop.validate_plan", lambda req, plan: next(llm_iter))
+    monkeypatch.setattr("pipeline.loop.validate_plan", lambda req, plan, recorder=None: next(llm_iter))
     monkeypatch.setattr("pipeline.loop.crosscheck_plan", lambda req, plan, foods: next(code_iter))
     monkeypatch.setattr("pipeline.loop.audit_plan", lambda req, plan, foods: stub_audit)
     monkeypatch.setattr("pipeline.loop.load_foods", lambda: {})
@@ -85,6 +90,7 @@ def test_loop_revises_until_pass(monkeypatch):
     assert res.history[0].passed is False
     assert calls["plan"] == 2
     assert calls["revision_violations"] == [[LLM_VIOLATION]]  # 위반이 계획자에 되돌아갔다
+    assert [call.attempt for call in res.llm_calls] == [1, 2]  # 호출 기록에 시도 번호가 새겨진다
 
 
 def test_loop_gives_up_honestly_after_max_attempts(monkeypatch):
@@ -127,10 +133,18 @@ def test_merge_keeps_validator_wording_when_code_confirms():
     assert merged.violations == [LLM_VIOLATION]
 
 
-def test_merge_drops_unconfirmed_arithmetic_claims():
-    """검증자가 "한도 내"까지 위반으로 보고하는 노이즈는 재계산 불일치로 폐기된다."""
-    noise = LLM_VIOLATION.model_copy(update={"day": "수", "evidence": "765mg < 800mg (한도 내)"})
-    merged = merge_reports(ValidationReport(passed=False, violations=[noise]), [])
+def test_merge_drops_unconfirmed_validator_claims():
+    """코드 재계산으로 확인되지 않는 검증자 주장은 유형 불문 폐기된다.
+
+    리허설 실물: "765mg < 800mg (한도 내)"를 제약_위반으로, "주 2회 이하"인
+    고등어구이 2회를 중복으로 보고하는 노이즈가 수정 루프를 오염시켰다.
+    """
+    noise = [
+        LLM_VIOLATION.model_copy(update={"day": "수", "evidence": "765mg < 800mg (한도 내)"}),
+        LLM_VIOLATION.model_copy(update={"type": "중복", "evidence": "고등어구이 주 2회 반복 제공"}),
+        LLM_VIOLATION.model_copy(update={"type": "존재하지_않는_음식", "evidence": "원본 목록에 code 없음"}),
+    ]
+    merged = merge_reports(ValidationReport(passed=False, violations=noise), [])
     assert merged.passed is True
     assert merged.violations == []
 

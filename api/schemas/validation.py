@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from schemas.llm import LlmCall
 from schemas.meal import Meal, PlanRequest
 
 
@@ -82,3 +83,4 @@ class PlanResponse(BaseModel):
     attempts: int
     history: list[AttemptRecord]
     audit: PlanAudit  # 최종 식단에 대한 코드 재계산 근거
+    llm_calls: list[LlmCall] = []  # 호출별 입력·출력 전문·토큰 — 개발 참고용 관측 데이터
