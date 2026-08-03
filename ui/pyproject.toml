@@ -1,0 +1,10 @@
+[project]
+name = "week03-meal-planner-ui"
+version = "0.1.0"
+description = "한 주 밥상 UI — 폼형 Streamlit (사전 구축)"
+requires-python = ">=3.12"
+dependencies = [
+    "streamlit>=1.40",
+    "requests>=2.32",
+    "pandas>=2.2",
+]
