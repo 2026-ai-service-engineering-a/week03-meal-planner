@@ -960,7 +960,7 @@ wheels = [
 
 [[package]]
 name = "week03-meal-planner-ui"
-version = "0.1.0"
+version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "pandas" },
