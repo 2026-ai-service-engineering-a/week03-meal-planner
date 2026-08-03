@@ -62,7 +62,7 @@ curl -s localhost:8000/plan -X POST -H 'Content-Type: application/json' \
 
 `data/foods.json`은 [식품안전나라 K-FIND 식품영양성분 DB](https://various.foodsafetykorea.go.kr/nutrient/general/down/historyList.do)
 **음식 DB**(엑셀 파일 다운로드, 약 11.35MB·2만 건 규모)에서 10개 컬럼만 추출한
-경량 스냅샷입니다 (음식 94종, 시연 규모).
+경량 스냅샷입니다 (음식 500종, 시연 규모 — `prepare_data.py`의 `MAX_FOODS`).
 
 - 영양값은 **100g 기준**이고 `serving_g`(1인분량)가 따로 있습니다. 사람이 먹는
   단위로 환산해야 하며, 이 환산이 LLM이 정확히 틀리는 지점입니다
@@ -77,7 +77,7 @@ curl -s localhost:8000/plan -X POST -H 'Content-Type: application/json' \
   호스트에 파이썬·pandas가 없어도 됩니다 — 전처리도 compose로 돕니다.
   **재생성 시 다운로드 시점의 DB 버전·일자를 이 절에 기록하세요** —
   데이터에도 버전이 있습니다
-- 현재 스냅샷: 음식DB 규격 기반 시연용 경량판 (2026-08-03 생성)
+- 현재 스냅샷: K-FIND 음식DB 원본에서 재생성한 실데이터 500종 (2026-08-03 다운로드)
 
 ## 저장소 구조
 
@@ -129,8 +129,23 @@ curl -s localhost:8000/plan -X POST -H 'Content-Type: application/json' \
        "request":"국물 요리 위주로 짜줘"}' | jq '{attempts, passed: .report.passed, history}'
 ```
 
-응답의 `attempts`·`history`가 루프가 돌았다는 증거입니다. 1차에서 검증자가
-잡고("순대국밥 470mg/100g × 900g = 4,230mg > 800mg"), 2차에서 통과합니다.
+응답의 `attempts`·`history`가 루프가 돌았다는 증거이고, `audit`이 "통과"의
+근거입니다 — 끼니별 실존·환산·열량·단백질·나트륨 판정을 코드 재계산 수치로
+싣습니다 (UI의 "검증 상세"가 이걸 그대로 그립니다).
+
+**진행 과정을 실시간으로 보려면** `/plan/stream` (SSE) — UI가 쓰는
+엔드포인트이고, curl로도 볼 수 있습니다. 서버에 작업 상태 저장은 없습니다
+(진행 상태는 연결 안에만 삽니다):
+
+```bash
+curl -sN localhost:8000/plan/stream -X POST -H 'Content-Type: application/json' \
+  -d '{"kcal_min":500,"kcal_max":800,"sodium_limit_mg":800,"protein_min_g":25,
+       "request":"국물 요리 위주로 짜줘"}'
+# data: {"event":"progress","stage":"planner","detail":"계획자 호출 — 식단 초안 생성 (시도 1/3)",...}
+# data: {"event":"progress","stage":"validator",...}
+# ...
+# data: {"event":"result","data":{...}}
+```
 
 **모델이 실제로 본 것과 뱉은 것** (개발 모드 = LOG_LEVEL=debug):
 

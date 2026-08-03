@@ -1,8 +1,8 @@
 """수정 루프·병합 테스트 — LLM 없이 루프와 심판의 기계 동작만 검증한다."""
 
-from pipeline.loop import MAX_ATTEMPTS, merge_reports, run_pipeline
+from pipeline.loop import MAX_ATTEMPTS, merge_reports, run_pipeline, run_pipeline_events
 from schemas.meal import DAYS, Meal, MealPlan, PlanRequest
-from schemas.validation import ValidationReport, Violation
+from schemas.validation import PlanAudit, ValidationReport, Violation
 
 LLM_VIOLATION = Violation(
     type="제약_위반",
@@ -50,11 +50,20 @@ def wire(monkeypatch, llm_reports: list[ValidationReport], code_rounds: list[lis
             calls["revision_violations"].append(violations)
         return fake_meal_plan()
 
+    stub_audit = PlanAudit(
+        constraints=PlanRequest(),
+        meals=[],
+        days_complete=True,
+        rep_counts={},
+        repetition_ok=True,
+        weekly_sodium_mg=0.0,
+    )
     llm_iter = iter(llm_reports)
     code_iter = iter(code_rounds)
     monkeypatch.setattr("pipeline.loop.plan_meals", fake_plan)
     monkeypatch.setattr("pipeline.loop.validate_plan", lambda req, plan: next(llm_iter))
     monkeypatch.setattr("pipeline.loop.crosscheck_plan", lambda req, plan, foods: next(code_iter))
+    monkeypatch.setattr("pipeline.loop.audit_plan", lambda req, plan, foods: stub_audit)
     monkeypatch.setattr("pipeline.loop.load_foods", lambda: {})
     monkeypatch.setattr("pipeline.loop.select_candidates", lambda req, foods: [])
     return calls
@@ -90,6 +99,25 @@ def test_loop_gives_up_honestly_after_max_attempts(monkeypatch):
     assert res.report.passed is False
     assert res.report.violations == [LLM_VIOLATION]
     assert calls["plan"] == MAX_ATTEMPTS
+
+
+def test_pipeline_events_narrate_the_loop(monkeypatch):
+    """진행 이벤트가 루프의 실제 순서를 서술한다 — 마지막은 항상 결과."""
+    wire(
+        monkeypatch,
+        [
+            ValidationReport(passed=False, violations=[LLM_VIOLATION]),
+            ValidationReport(passed=True, violations=[]),
+        ],
+        [[CODE_VIOLATION], []],
+    )
+    stages = [event.get("stage", event["event"]) for event in run_pipeline_events(PlanRequest())]
+    assert stages == [
+        "candidates",
+        "planner", "validator", "violations",   # 시도 1: 위반 → 회신
+        "planner", "validator", "passed",       # 시도 2: 통과
+        "result",
+    ]
 
 
 def test_merge_keeps_validator_wording_when_code_confirms():

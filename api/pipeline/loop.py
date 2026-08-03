@@ -8,8 +8,10 @@
 위반 목록을 함께 반환한다 — 정직한 실패.
 """
 
+from collections.abc import Iterator
+
 from llm.client import log
-from pipeline.crosscheck import crosscheck_plan
+from pipeline.crosscheck import audit_plan, crosscheck_plan
 from pipeline.foods import load_foods, select_candidates
 from pipeline.planner import plan_meals
 from pipeline.validator import validate_plan
@@ -52,21 +54,61 @@ def merge_reports(llm_report: ValidationReport, code_violations: list[Violation]
     return ValidationReport(passed=not merged, violations=merged)
 
 
-def run_pipeline(req: PlanRequest) -> PlanResponse:
+def _progress(stage: str, detail: str, attempt: int | None = None) -> dict:
+    event = {"event": "progress", "stage": stage, "detail": detail, "max_attempts": MAX_ATTEMPTS}
+    if attempt is not None:
+        event["attempt"] = attempt
+    return event
+
+
+def run_pipeline_events(req: PlanRequest) -> Iterator[dict]:
+    """파이프라인을 돌리며 진행 이벤트를 낳는 제너레이터 — 마지막 이벤트가 결과다.
+
+    서버에 작업 상태를 저장하지 않는다(무상태 유지). 진행 상태는 이 제너레이터를
+    소비하는 HTTP 연결 안에만 산다. /plan은 결과만, /plan/stream은 과정까지 흘린다.
+    """
     foods = load_foods()
     candidates = select_candidates(req, foods)
+    yield _progress("candidates", f"후보 선별 — {len(foods)}종 중 {len(candidates)}종을 프롬프트에 주입")
 
     history: list[AttemptRecord] = []
     violations: list[Violation] = []
     plan = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
+        action = "위반을 반영해 재계획" if violations else "식단 초안 생성"
+        yield _progress("planner", f"계획자 호출 — {action} (시도 {attempt}/{MAX_ATTEMPTS})", attempt)
         plan = plan_meals(req, candidates, violations=violations or None, previous=plan)
+
+        yield _progress("validator", "검증자 호출 — 다른 회사 모델이 원본 수치와 대조 중", attempt)
         report = merge_reports(validate_plan(req, plan), crosscheck_plan(req, plan, foods))
         history.append(AttemptRecord(attempt=attempt, passed=report.passed, violations=report.violations))
 
         if report.passed:
+            yield _progress("passed", f"검증 통과 (시도 {attempt}회)", attempt)
             break
         log.info("LOOP ─ attempt %d/%d 미통과 (위반 %d건) — 위반 목록을 계획자에 회신", attempt, MAX_ATTEMPTS, len(report.violations))
+        yield {
+            **_progress("violations", f"위반 {len(report.violations)}건 발견 — 계획자에 회신", attempt),
+            "violations": [v.model_dump() for v in report.violations],
+        }
         violations = report.violations
 
-    return PlanResponse(meals=plan.meals, report=report, attempts=len(history), history=history)
+    yield {
+        "event": "result",
+        "data": PlanResponse(
+            meals=plan.meals,
+            report=report,
+            attempts=len(history),
+            history=history,
+            audit=audit_plan(req, plan, foods),  # "통과"의 산수 근거 — 최종 식단의 기준별 판정표
+        ),
+    }
+
+
+def run_pipeline(req: PlanRequest) -> PlanResponse:
+    """스트리밍 없이 결과만 — 이벤트를 소비하고 마지막 결과를 돌려준다."""
+    result = None
+    for event in run_pipeline_events(req):
+        if event["event"] == "result":
+            result = event["data"]
+    return result

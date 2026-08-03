@@ -1,13 +1,16 @@
-"""식단 플래너 API — 2회전: 계획 → 검증 → 크로스체크 → 수정 루프 (지휘는 전부 코드).
+"""식단 플래너 API — 계획 → 검증 → 크로스체크 → 수정 루프 (지휘는 전부 코드).
 
 LLM 호출 지점은 정확히 두 곳(계획자·검증자)뿐이고, 둘은 다른 회사 모델이다.
 입구의 타입 보증(Pydantic·PlanRequest)과 출구의 타입 보증(instructor)이 만나는 곳.
 헤드리스 구조: 이 API는 UI를 모른다. curl·Swagger(/docs)로 불러도 똑같이 동작한다.
 """
 
-from fastapi import FastAPI
+import json
 
-from pipeline.loop import run_pipeline
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+
+from pipeline.loop import run_pipeline, run_pipeline_events
 from schemas.meal import PlanRequest
 from schemas.validation import PlanResponse
 
@@ -21,5 +24,27 @@ def health() -> dict:
 
 @app.post("/plan")
 def plan(req: PlanRequest) -> PlanResponse:
-    """최종 식단 + 검증 리포트 + 시도 횟수 + 시도별 위반 이력 — 루프의 증거가 응답에 남는다."""
+    """최종 식단 + 검증 리포트 + 시도 이력 + 감사(통과의 근거) — 루프의 증거가 응답에 남는다."""
     return run_pipeline(req)
+
+
+@app.post("/plan/stream")
+def plan_stream(req: PlanRequest) -> StreamingResponse:
+    """/plan과 같은 일, 다만 진행 이벤트를 SSE로 흘린다 (UI의 중간 과정 표시용).
+
+    서버에 작업 상태 저장 없음 — 진행 상태는 이 HTTP 연결 안에만 산다.
+    이벤트: {"event": "progress", "stage": ..., "detail": ...} × N, 마지막에
+    {"event": "result", "data": PlanResponse}.
+    """
+
+    def sse():
+        for event in run_pipeline_events(req):
+            if event["event"] == "result":
+                event = {"event": "result", "data": event["data"].model_dump()}
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        sse(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
