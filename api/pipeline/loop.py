@@ -19,18 +19,36 @@ from schemas.validation import AttemptRecord, PlanResponse, ValidationReport, Vi
 MAX_ATTEMPTS = 3  # 루프 가드 — 파이프라인에도 상한이 있다 (2주차 에이전트 루프 가드의 재회)
 
 
+CODE_ARBITER_TYPES = {"환산_오류", "제약_위반"}  # 산수·제약 판정 — 코드 재계산이 최종 심판
+
+
 def merge_reports(llm_report: ValidationReport, code_violations: list[Violation]) -> ValidationReport:
-    """검증자 판정과 코드 재계산을 병합한다. 같은 (유형, 요일, 코드)면 검증자 것을 남긴다
-    (해석·제안의 품질이 값어치). 코드만 잡은 위반은 뒤에 붙는다 — 산수는 코드가 맞다."""
-    seen = {(v.type, v.day, v.food_code) for v in llm_report.violations}
+    """검증자 판정과 코드 재계산을 병합한다.
+
+    같은 (유형, 요일, 코드)면 검증자 것을 남긴다 — 해석·심각도·수정 제안의 품질이
+    LLM 검증자의 값어치다. 단, 산수·제약 유형은 코드 재계산으로 확인될 때만
+    인정한다 (누가 맞나? 산수는 코드가 맞다 — 검증자가 "한도 내"를 위반이라
+    보고하는 노이즈가 수정 루프를 오염시키는 것을 막는다). 코드만 잡은 위반은
+    뒤에 붙는다.
+    """
+    code_keys = {(v.type, v.day, v.food_code) for v in code_violations}
+    kept = [
+        v
+        for v in llm_report.violations
+        if v.type not in CODE_ARBITER_TYPES or (v.type, v.day, v.food_code) in code_keys
+    ]
+    dropped = len(llm_report.violations) - len(kept)
+
+    seen = {(v.type, v.day, v.food_code) for v in kept}
     code_only = [v for v in code_violations if (v.type, v.day, v.food_code) not in seen]
-    if code_only:
+    if dropped or code_only:
         log.info(
-            "CROSSCHECK ─ 검증자 %d건, 코드가 추가로 잡은 위반 %d건 (누가 맞나? 산수는 코드가 맞다)",
+            "CROSSCHECK ─ 검증자 %d건 중 재계산 불일치 %d건 폐기, 코드가 추가로 잡은 위반 %d건 (산수는 코드가 맞다)",
             len(llm_report.violations),
+            dropped,
             len(code_only),
         )
-    merged = [*llm_report.violations, *code_only]
+    merged = [*kept, *code_only]
     return ValidationReport(passed=not merged, violations=merged)
 
 
@@ -40,8 +58,9 @@ def run_pipeline(req: PlanRequest) -> PlanResponse:
 
     history: list[AttemptRecord] = []
     violations: list[Violation] = []
+    plan = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        plan = plan_meals(req, candidates, violations=violations or None)
+        plan = plan_meals(req, candidates, violations=violations or None, previous=plan)
         report = merge_reports(validate_plan(req, plan), crosscheck_plan(req, plan, foods))
         history.append(AttemptRecord(attempt=attempt, passed=report.passed, violations=report.violations))
 
