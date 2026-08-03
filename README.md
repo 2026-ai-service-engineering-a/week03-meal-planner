@@ -129,8 +129,23 @@ curl -s localhost:8000/plan -X POST -H 'Content-Type: application/json' \
        "request":"국물 요리 위주로 짜줘"}' | jq '{attempts, passed: .report.passed, history}'
 ```
 
-응답의 `attempts`·`history`가 루프가 돌았다는 증거입니다. 1차에서 검증자가
-잡고("순대국밥 470mg/100g × 900g = 4,230mg > 800mg"), 2차에서 통과합니다.
+응답의 `attempts`·`history`가 루프가 돌았다는 증거이고, `audit`이 "통과"의
+근거입니다 — 끼니별 실존·환산·열량·단백질·나트륨 판정을 코드 재계산 수치로
+싣습니다 (UI의 "검증 상세"가 이걸 그대로 그립니다).
+
+**진행 과정을 실시간으로 보려면** `/plan/stream` (SSE) — UI가 쓰는
+엔드포인트이고, curl로도 볼 수 있습니다. 서버에 작업 상태 저장은 없습니다
+(진행 상태는 연결 안에만 삽니다):
+
+```bash
+curl -sN localhost:8000/plan/stream -X POST -H 'Content-Type: application/json' \
+  -d '{"kcal_min":500,"kcal_max":800,"sodium_limit_mg":800,"protein_min_g":25,
+       "request":"국물 요리 위주로 짜줘"}'
+# data: {"event":"progress","stage":"planner","detail":"계획자 호출 — 식단 초안 생성 (시도 1/3)",...}
+# data: {"event":"progress","stage":"validator",...}
+# ...
+# data: {"event":"result","data":{...}}
+```
 
 **모델이 실제로 본 것과 뱉은 것** (개발 모드 = LOG_LEVEL=debug):
 

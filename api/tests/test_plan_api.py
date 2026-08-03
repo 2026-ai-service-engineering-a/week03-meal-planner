@@ -1,5 +1,7 @@
 """API 테스트 — LLM 키 없이도 도는 안전망 (LLM 호출은 monkeypatch로 끊는다)."""
 
+import json
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -71,6 +73,21 @@ def test_plan_returns_seven_meals_with_report(monkeypatch):
     assert body["attempts"] == 1
     assert body["history"][0]["attempt"] == 1
     assert body["audit"]["days_complete"] is True  # 통과의 근거(감사)가 응답에 실린다
+
+
+def test_plan_stream_emits_progress_then_result(monkeypatch):
+    """SSE는 과정 + 결과 — 마지막 data 이벤트가 /plan과 같은 응답이다."""
+
+    def fake_events(req):
+        yield {"event": "progress", "stage": "planner", "detail": "계획자 호출", "max_attempts": 3}
+        yield {"event": "result", "data": fake_plan_response()}
+
+    monkeypatch.setattr("app.main.run_pipeline_events", fake_events)
+    res = client.post("/plan/stream", json={})
+    assert res.status_code == 200
+    events = [json.loads(line[len("data: "):]) for line in res.text.splitlines() if line.startswith("data: ")]
+    assert [e["event"] for e in events] == ["progress", "result"]
+    assert len(events[-1]["data"]["meals"]) == 7
 
 
 def test_select_candidates_keeps_sodium_traps():
