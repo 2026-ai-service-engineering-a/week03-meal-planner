@@ -1,6 +1,6 @@
 [project]
 name = "week03-meal-planner-api"
-version = "0.1.0"
+version = "1.0.0"
 description = "한 주 밥상 — 나트륨 예산 안에서 저녁 7끼를 짜는 식단 플래너 API (3주차 라이브 시연)"
 requires-python = ">=3.12"
 dependencies = [
