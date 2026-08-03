@@ -1,0 +1,26 @@
+# PR 안전망 — PR을 올리면 pytest가 자동으로 돕니다.
+# LLM 키는 없습니다. 테스트는 키 없이 도는 것만 둡니다 (스키마 관문·순수 함수).
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: 의존성 설치
+        run: uv sync --frozen
+
+      - name: 테스트 실행
+        run: uv run pytest -q
