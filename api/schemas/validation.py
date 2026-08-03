@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from schemas.meal import Meal
+
 
 class Violation(BaseModel):
     type: Literal["존재하지_않는_음식", "환산_오류", "제약_위반", "중복"]
@@ -27,3 +29,24 @@ class ValidationReport(BaseModel):
 
     passed: bool
     violations: list[Violation] = []
+
+
+class AttemptRecord(BaseModel):
+    """수정 루프의 시도 1회 — 루프가 돌았다는 증거가 응답에 남는다."""
+
+    attempt: int
+    passed: bool
+    violations: list[Violation]
+
+
+class PlanResponse(BaseModel):
+    """최종 응답 = 식단 + 검증 리포트 + 시도 횟수 + 시도별 위반 이력.
+
+    3회 안에 통과 못 하면 passed=false인 리포트와 마지막 안이 그대로 나간다 —
+    정직한 실패.
+    """
+
+    meals: list[Meal]
+    report: ValidationReport
+    attempts: int
+    history: list[AttemptRecord]
