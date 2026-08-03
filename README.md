@@ -62,7 +62,7 @@ curl -s localhost:8000/plan -X POST -H 'Content-Type: application/json' \
 
 `data/foods.json`은 [식품안전나라 K-FIND 식품영양성분 DB](https://various.foodsafetykorea.go.kr/nutrient/general/down/historyList.do)
 **음식 DB**(엑셀 파일 다운로드, 약 11.35MB·2만 건 규모)에서 10개 컬럼만 추출한
-경량 스냅샷입니다 (음식 94종, 시연 규모).
+경량 스냅샷입니다 (음식 500종, 시연 규모 — `prepare_data.py`의 `MAX_FOODS`).
 
 - 영양값은 **100g 기준**이고 `serving_g`(1인분량)가 따로 있습니다. 사람이 먹는
   단위로 환산해야 하며, 이 환산이 LLM이 정확히 틀리는 지점입니다
@@ -77,7 +77,7 @@ curl -s localhost:8000/plan -X POST -H 'Content-Type: application/json' \
   호스트에 파이썬·pandas가 없어도 됩니다 — 전처리도 compose로 돕니다.
   **재생성 시 다운로드 시점의 DB 버전·일자를 이 절에 기록하세요** —
   데이터에도 버전이 있습니다
-- 현재 스냅샷: 음식DB 규격 기반 시연용 경량판 (2026-08-03 생성)
+- 현재 스냅샷: K-FIND 음식DB 원본에서 재생성한 실데이터 500종 (2026-08-03 다운로드)
 
 ## 저장소 구조
 
