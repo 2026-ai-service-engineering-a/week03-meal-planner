@@ -74,6 +74,15 @@ except Exception as exc:  # pragma: no cover
     log.warning("instructor 훅 등록 실패 (관측 로그 축소): %s", exc)
 
 
+def _root_cause(exc: BaseException) -> BaseException:
+    """래퍼 예외(instructor·tenacity)를 벗겨 원인(예: NotFoundError)을 로그에 드러낸다."""
+    seen: set[int] = set()
+    while exc.__cause__ is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        exc = exc.__cause__
+    return exc
+
+
 def model_chain(role: str) -> list[str]:
     """[기본, 폴백…] 순서. 중복은 순서를 지키며 제거한다."""
     prefix = role.upper()
@@ -130,6 +139,6 @@ def structured_complete[T: BaseModel](
             _log_usage(role, model, completion)
             return result
         except Exception as exc:  # 이 프로바이더가 죽으면 다음 폴백으로
-            log.warning("LLM CALL FAILED ─ role=%s model=%s (%s)", role, model, type(exc).__name__)
+            log.warning("LLM CALL FAILED ─ role=%s model=%s (%s)", role, model, type(_root_cause(exc)).__name__)
             last_error = exc
     raise last_error  # 체인을 다 쓰고도 실패 — 정직한 에러

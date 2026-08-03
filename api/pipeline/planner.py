@@ -21,6 +21,7 @@ SYSTEM_PROMPT = """너는 식단 계획자다. 저녁 7끼(월~일)를 짠다.
   calories_kcal·protein_g·sodium_mg에 넣는다.
 - 제약: 한 끼 {kcal_min}~{kcal_max}kcal, 단백질 {protein_min_g}g 이상,
   나트륨 {sodium_limit_mg}mg 이내, 같은 대표식품(food_name의 '_' 앞부분)은 주 2회 이하.
+- 요청사항은 제약을 어기지 않는 범위에서만 반영한다. 둘이 충돌하면 제약이 이긴다.
 - 요일은 월~일 각각 정확히 한 번.
 - reason에는 그 음식을 고른 이유를 한 줄로 쓴다.
 
@@ -34,7 +35,7 @@ SYSTEM_PROMPT = """너는 식단 계획자다. 저녁 7끼(월~일)를 짠다.
 def _candidate_lines(candidates: list[dict]) -> str:
     """후보 목록을 프롬프트에 박는다 — 환각이 억제되는 이유가 이 텍스트다."""
     return "\n".join(
-        f"[{food['food_code']} {food['food_name']} ({food['category']}) "
+        f"[{food['food_code']} {food['food_name']} "
         f"{food['energy_kcal_100g']}kcal/100g 단백질{food['protein_g_100g']}g "
         f"나트륨{food['sodium_mg_100g']}mg 1인분{food['serving_g']}g]"
         for food in candidates
@@ -49,10 +50,19 @@ def _violation_lines(violations: list[Violation]) -> str:
     )
 
 
+def _meal_lines(plan: MealPlan) -> str:
+    return "\n".join(
+        f"{meal.day} {meal.food_name}({meal.food_code}) {meal.serving_g}g "
+        f"{meal.calories_kcal}kcal 단백질{meal.protein_g}g 나트륨{meal.sodium_mg}mg"
+        for meal in plan.meals
+    )
+
+
 def plan_meals(
     req: PlanRequest,
     candidates: list[dict],
     violations: list[Violation] | None = None,
+    previous: MealPlan | None = None,
 ) -> MealPlan:
     system = SYSTEM_PROMPT.format(
         kcal_min=req.kcal_min,
@@ -68,7 +78,14 @@ def plan_meals(
     label = ""
     if violations:
         label = "(revision)"
-        user += f"\n\n직전 식단에서 다음 위반이 발견됨. 반영해서 다시 계획해라:\n{_violation_lines(violations)}"
+        if previous is not None:
+            user += f"\n\n직전 식단:\n{_meal_lines(previous)}"
+        user += (
+            "\n\n직전 식단에서 다음 위반이 발견됨. 위반이 없는 끼니는 그대로 유지하고,"
+            " 위반이 있는 끼니만 제약을 지키는 음식으로 교체해라."
+            " 위반 해소가 요청사항보다 우선한다:\n"
+            f"{_violation_lines(violations)}"
+        )
 
     return structured_complete(
         "planner",

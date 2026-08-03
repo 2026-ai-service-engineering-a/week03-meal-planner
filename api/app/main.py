@@ -11,7 +11,7 @@ from pipeline.loop import run_pipeline
 from schemas.meal import PlanRequest
 from schemas.validation import PlanResponse
 
-app = FastAPI(title="한 주 밥상 — 식단 플래너 API", version="0.1.0")
+app = FastAPI(title="한 주 밥상 — 식단 플래너 API", version="1.0.0")
 
 
 @app.get("/health")
