@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from pipeline.foods import load_foods, select_candidates
 from schemas.meal import DAYS, Meal, MealPlan, PlanRequest
-from schemas.validation import AttemptRecord, PlanResponse, ValidationReport
+from schemas.validation import AttemptRecord, PlanAudit, PlanResponse, ValidationReport
 
 client = TestClient(app)
 
@@ -28,6 +28,17 @@ def fake_meal_plan() -> MealPlan:
     )
 
 
+def fake_audit() -> PlanAudit:
+    return PlanAudit(
+        constraints=PlanRequest(),
+        meals=[],
+        days_complete=True,
+        rep_counts={},
+        repetition_ok=True,
+        weekly_sodium_mg=0.0,
+    )
+
+
 def fake_plan_response() -> PlanResponse:
     report = ValidationReport(passed=True, violations=[])
     return PlanResponse(
@@ -35,6 +46,7 @@ def fake_plan_response() -> PlanResponse:
         report=report,
         attempts=1,
         history=[AttemptRecord(attempt=1, passed=True, violations=[])],
+        audit=fake_audit(),
     )
 
 
@@ -58,6 +70,7 @@ def test_plan_returns_seven_meals_with_report(monkeypatch):
     assert body["report"]["passed"] is True
     assert body["attempts"] == 1
     assert body["history"][0]["attempt"] == 1
+    assert body["audit"]["days_complete"] is True  # 통과의 근거(감사)가 응답에 실린다
 
 
 def test_select_candidates_keeps_sodium_traps():

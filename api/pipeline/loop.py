@@ -9,7 +9,7 @@
 """
 
 from llm.client import log
-from pipeline.crosscheck import crosscheck_plan
+from pipeline.crosscheck import audit_plan, crosscheck_plan
 from pipeline.foods import load_foods, select_candidates
 from pipeline.planner import plan_meals
 from pipeline.validator import validate_plan
@@ -69,4 +69,10 @@ def run_pipeline(req: PlanRequest) -> PlanResponse:
         log.info("LOOP ─ attempt %d/%d 미통과 (위반 %d건) — 위반 목록을 계획자에 회신", attempt, MAX_ATTEMPTS, len(report.violations))
         violations = report.violations
 
-    return PlanResponse(meals=plan.meals, report=report, attempts=len(history), history=history)
+    return PlanResponse(
+        meals=plan.meals,
+        report=report,
+        attempts=len(history),
+        history=history,
+        audit=audit_plan(req, plan, foods),  # "통과"의 산수 근거 — 최종 식단의 기준별 판정표
+    )

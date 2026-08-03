@@ -7,8 +7,8 @@
 
 from collections import Counter
 
-from schemas.meal import Meal, MealPlan, PlanRequest
-from schemas.validation import Violation
+from schemas.meal import DAYS, Meal, MealPlan, PlanRequest
+from schemas.validation import MealAudit, PlanAudit, Violation
 
 TOLERANCE = 0.05  # 환산 기재값 허용 오차 5% — 반올림 차이는 봐준다
 
@@ -117,6 +117,58 @@ def _constraint_violations(req: PlanRequest, meal: Meal, food: dict) -> list[Vio
             )
         )
     return found
+
+
+def audit_plan(req: PlanRequest, plan: MealPlan, foods: dict[str, dict]) -> PlanAudit:
+    """최종 식단의 기준별 판정표 — "통과"의 근거를 수치로 남긴다 (응답에 실린다)."""
+    meal_audits = []
+    for meal in plan.meals:
+        food = foods.get(meal.food_code)
+        if food is None:
+            meal_audits.append(
+                MealAudit(
+                    day=meal.day,
+                    food_name=meal.food_name,
+                    food_code=meal.food_code,
+                    exists=False,
+                    conversion_ok=False,
+                    kcal=meal.calories_kcal,
+                    kcal_ok=False,
+                    protein_g=meal.protein_g,
+                    protein_ok=False,
+                    sodium_mg=meal.sodium_mg,
+                    sodium_ok=False,
+                )
+            )
+            continue
+        kcal = per_serving(food["energy_kcal_100g"], meal.serving_g)
+        protein = per_serving(food["protein_g_100g"], meal.serving_g)
+        sodium = per_serving(food["sodium_mg_100g"], meal.serving_g)
+        meal_audits.append(
+            MealAudit(
+                day=meal.day,
+                food_name=meal.food_name,
+                food_code=meal.food_code,
+                exists=True,
+                conversion_ok=not _conversion_violations(meal, food),
+                kcal=kcal,
+                kcal_ok=req.kcal_min <= kcal <= req.kcal_max,
+                protein_g=protein,
+                protein_ok=protein >= req.protein_min_g,
+                sodium_mg=sodium,
+                sodium_ok=sodium <= req.sodium_limit_mg,
+            )
+        )
+
+    rep_counts = dict(Counter(representative(meal.food_name) for meal in plan.meals))
+    return PlanAudit(
+        constraints=req,
+        meals=meal_audits,
+        days_complete=sorted(meal.day for meal in plan.meals) == sorted(DAYS),
+        rep_counts=rep_counts,
+        repetition_ok=all(count <= 2 for count in rep_counts.values()),
+        weekly_sodium_mg=weekly_sodium_mg(plan, foods),
+    )
 
 
 def crosscheck_plan(req: PlanRequest, plan: MealPlan, foods: dict[str, dict]) -> list[Violation]:

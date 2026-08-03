@@ -2,7 +2,7 @@
 
 from pipeline.loop import MAX_ATTEMPTS, merge_reports, run_pipeline
 from schemas.meal import DAYS, Meal, MealPlan, PlanRequest
-from schemas.validation import ValidationReport, Violation
+from schemas.validation import PlanAudit, ValidationReport, Violation
 
 LLM_VIOLATION = Violation(
     type="제약_위반",
@@ -50,11 +50,20 @@ def wire(monkeypatch, llm_reports: list[ValidationReport], code_rounds: list[lis
             calls["revision_violations"].append(violations)
         return fake_meal_plan()
 
+    stub_audit = PlanAudit(
+        constraints=PlanRequest(),
+        meals=[],
+        days_complete=True,
+        rep_counts={},
+        repetition_ok=True,
+        weekly_sodium_mg=0.0,
+    )
     llm_iter = iter(llm_reports)
     code_iter = iter(code_rounds)
     monkeypatch.setattr("pipeline.loop.plan_meals", fake_plan)
     monkeypatch.setattr("pipeline.loop.validate_plan", lambda req, plan: next(llm_iter))
     monkeypatch.setattr("pipeline.loop.crosscheck_plan", lambda req, plan, foods: next(code_iter))
+    monkeypatch.setattr("pipeline.loop.audit_plan", lambda req, plan, foods: stub_audit)
     monkeypatch.setattr("pipeline.loop.load_foods", lambda: {})
     monkeypatch.setattr("pipeline.loop.select_candidates", lambda req, foods: [])
     return calls
