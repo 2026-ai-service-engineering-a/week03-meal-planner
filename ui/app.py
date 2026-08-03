@@ -10,6 +10,7 @@ API와의 대화는 HTTP뿐이다 — 이 파일을 Next.js로 갈아끼워도 A
 API_BASE_URL이 http://api:8000 이다.
 """
 
+import json
 import os
 
 import pandas as pd
@@ -69,12 +70,28 @@ if run_clicked:
         "protein_min_g": protein_min_g,
         "request": st.session_state.request_text,
     }
+    # /plan/stream(SSE)로 중간 과정을 실시간 표시 — 서버는 여전히 무상태,
+    # 진행 상태는 이 HTTP 연결 안에만 산다
+    status = st.status("파이프라인 시작 — 순서·반복·종료는 코드가 쥡니다", expanded=True)
     try:
-        with st.spinner("계획자·검증자가 일하는 중… (수정 루프가 돌면 1~2분 걸릴 수 있어요)"):
-            res = requests.post(f"{API_BASE_URL}/plan", json=payload, timeout=600)
-        res.raise_for_status()
-        st.session_state.last_result = {"payload": payload, "data": res.json()}
+        with requests.post(f"{API_BASE_URL}/plan/stream", json=payload, stream=True, timeout=600) as res:
+            res.raise_for_status()
+            res.encoding = "utf-8"
+            for line in res.iter_lines(decode_unicode=True):
+                if not line or not line.startswith("data: "):
+                    continue
+                event = json.loads(line[len("data: "):])
+                if event["event"] == "result":
+                    st.session_state.last_result = {"payload": payload, "data": event["data"]}
+                    status.update(label="완료 — 아래에 결과를 그렸습니다", state="complete", expanded=False)
+                    continue
+                status.write(event["detail"])
+                if event.get("stage") == "violations":
+                    for v in event.get("violations", [])[:5]:
+                        status.write(f"　↳ [{v['severity']}] {v['day']} {v['type']} — {v['evidence']}")
+                status.update(label=event["detail"])
     except requests.RequestException as exc:
+        status.update(label="API 호출 실패", state="error")
         st.error(f"API 호출 실패: {exc}")
 
 # ── 결과 대시보드 ─────────────────────────────────────────────────────
@@ -99,6 +116,23 @@ m1.metric("검증", "통과 ✅" if report.get("passed") else "미통과 ⚠️"
 m2.metric("시도 횟수", f"{attempts}회")
 m3.metric("남은 위반", f"{len(report.get('violations', []))}건")
 
+# 통과가 "감상"이 아니라 무엇을 확인한 결과인지 — audit(코드 재계산 근거) 요약
+audit = data.get("audit")
+if audit:
+    checks = audit["meals"]
+    total = len(checks)
+
+    def ok_count(key: str) -> int:
+        return sum(1 for check in checks if check[key])
+
+    mark = lambda flag: "✅" if flag else "❌"  # noqa: E731
+    st.caption(
+        f"확인 항목 (코드 재계산): 실존 {ok_count('exists')}/{total} · "
+        f"환산 일치 {ok_count('conversion_ok')}/{total} · 열량 범위 {ok_count('kcal_ok')}/{total} · "
+        f"단백질 {ok_count('protein_ok')}/{total} · 나트륨 {ok_count('sodium_ok')}/{total} · "
+        f"요일 구성 {mark(audit['days_complete'])} · 대표식품 ≤2회 {mark(audit['repetition_ok'])}"
+    )
+
 # 식단표
 meals = data["meals"]
 df = pd.DataFrame(
@@ -121,6 +155,42 @@ st.caption(
     f"평균 나트륨 {df['나트륨(mg)'].mean():,.0f} mg · "
     f"평균 단백질 {df['단백질(g)'].mean():,.1f} g"
 )
+
+# 검증 상세 — 끼니별 기준 판정표. 수치는 API의 audit(순수 함수 재계산)를 그대로 그린다
+if audit:
+    with st.expander("검증 상세 — 무엇을 확인해서 나온 판정인가", expanded=not report.get("passed", False)):
+        c = audit["constraints"]
+        st.caption(  # 물결표(~) 두 개는 마크다운 취소선이 되므로 이스케이프한다
+            f"기준: 한 끼 {c['kcal_min']}\\~{c['kcal_max']}kcal · 단백질 ≥{c['protein_min_g']}g · "
+            f"나트륨 ≤{c['sodium_limit_mg']}mg · 같은 대표식품 주 2회 이하 · 월\\~일 각 1끼"
+        )
+        audit_df = pd.DataFrame(
+            [
+                {
+                    "요일": check["day"],
+                    "음식": check["food_name"],
+                    "DB 실존": mark(check["exists"]),
+                    "환산 일치": mark(check["conversion_ok"]),
+                    "열량(kcal)": f"{check['kcal']:,.0f} {mark(check['kcal_ok'])}",
+                    "단백질(g)": f"{check['protein_g']:,.1f} {mark(check['protein_ok'])}",
+                    "나트륨(mg)": f"{check['sodium_mg']:,.0f} {mark(check['sodium_ok'])}",
+                }
+                for check in checks
+            ]
+        )
+        st.dataframe(audit_df, use_container_width=True, hide_index=True)
+
+        repeated = {rep: n for rep, n in audit["rep_counts"].items() if n > 1}
+        rep_text = " · ".join(f"{rep} {n}회" for rep, n in repeated.items()) if repeated else "중복 없음"
+        st.caption(
+            f"요일 구성 {mark(audit['days_complete'])} (월~일 각 1끼) · "
+            f"대표식품 2회 이상: {rep_text} {mark(audit['repetition_ok'])} · "
+            f"주간 나트륨 합계 {audit['weekly_sodium_mg']:,.0f} mg"
+        )
+        st.caption(
+            "수치는 전부 서버 코드가 원본 100g값 × 1인분량으로 재계산한 값입니다 — "
+            "LLM 검증자의 판정과 별개로, 산수는 코드가 이중 보증합니다."
+        )
 
 
 def render_violations(violations: list, key_prefix: str) -> None:
