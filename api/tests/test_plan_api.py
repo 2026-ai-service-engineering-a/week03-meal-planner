@@ -75,6 +75,18 @@ def test_plan_returns_seven_meals_with_report(monkeypatch):
     assert body["audit"]["days_complete"] is True  # 통과의 근거(감사)가 응답에 실린다
 
 
+def test_config_exposes_models_but_never_keys(monkeypatch):
+    monkeypatch.setenv("PLANNER_MODEL", "openai/gpt-test")
+    monkeypatch.setenv("VALIDATOR_MODEL", "anthropic/claude-test")
+    monkeypatch.setenv("VALIDATOR_FALLBACKS", "gemini/gemini-test, openai/gpt-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
+    body = client.get("/config").json()
+    assert body["planner_model"] == "openai/gpt-test"
+    assert body["validator_model"] == "anthropic/claude-test"
+    assert body["validator_fallbacks"] == ["gemini/gemini-test", "openai/gpt-test"]
+    assert "sk-secret" not in json.dumps(body)  # 키는 절대 응답에 실리지 않는다
+
+
 def test_plan_stream_emits_progress_then_result(monkeypatch):
     """SSE는 과정 + 결과 — 마지막 data 이벤트가 /plan과 같은 응답이다."""
 

@@ -11,6 +11,7 @@ VALIDATOR_FALLBACKS 순서로 넘어간다. 계획자가 죽으면 "식단이 �
 
 from llm.client import structured_complete
 from pipeline.foods import load_foods
+from schemas.llm import LlmCall
 from schemas.meal import MealPlan, PlanRequest
 from schemas.validation import ValidationReport
 
@@ -57,7 +58,11 @@ def _source_lines(plan: MealPlan, foods: dict[str, dict]) -> str:
     return "\n".join(lines)
 
 
-def validate_plan(req: PlanRequest, plan: MealPlan) -> ValidationReport:
+def validate_plan(
+    req: PlanRequest,
+    plan: MealPlan,
+    recorder: list[LlmCall] | None = None,
+) -> ValidationReport:
     foods = load_foods()
     system = SYSTEM_PROMPT.format(
         kcal_min=req.kcal_min,
@@ -73,4 +78,5 @@ def validate_plan(req: PlanRequest, plan: MealPlan) -> ValidationReport:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
+        recorder=recorder,
     )

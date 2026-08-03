@@ -15,6 +15,7 @@ from pipeline.crosscheck import audit_plan, crosscheck_plan
 from pipeline.foods import load_foods, select_candidates
 from pipeline.planner import plan_meals
 from pipeline.validator import validate_plan
+from schemas.llm import LlmCall
 from schemas.meal import PlanRequest
 from schemas.validation import AttemptRecord, PlanResponse, ValidationReport, Violation
 
@@ -73,15 +74,19 @@ def run_pipeline_events(req: PlanRequest) -> Iterator[dict]:
 
     history: list[AttemptRecord] = []
     violations: list[Violation] = []
+    llm_calls: list[LlmCall] = []  # 호출별 입력·출력 전문 — 응답에 실리는 관측 데이터
     plan = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
+        recorded_before = len(llm_calls)
         action = "위반을 반영해 재계획" if violations else "식단 초안 생성"
         yield _progress("planner", f"계획자 호출 — {action} (시도 {attempt}/{MAX_ATTEMPTS})", attempt)
-        plan = plan_meals(req, candidates, violations=violations or None, previous=plan)
+        plan = plan_meals(req, candidates, violations=violations or None, previous=plan, recorder=llm_calls)
 
         yield _progress("validator", "검증자 호출 — 다른 회사 모델이 원본 수치와 대조 중", attempt)
-        report = merge_reports(validate_plan(req, plan), crosscheck_plan(req, plan, foods))
+        report = merge_reports(validate_plan(req, plan, recorder=llm_calls), crosscheck_plan(req, plan, foods))
         history.append(AttemptRecord(attempt=attempt, passed=report.passed, violations=report.violations))
+        for call in llm_calls[recorded_before:]:  # 이번 시도에서 나간 호출들에 시도 번호를 새긴다
+            call.attempt = attempt
 
         if report.passed:
             yield _progress("passed", f"검증 통과 (시도 {attempt}회)", attempt)
@@ -101,6 +106,7 @@ def run_pipeline_events(req: PlanRequest) -> Iterator[dict]:
             attempts=len(history),
             history=history,
             audit=audit_plan(req, plan, foods),  # "통과"의 산수 근거 — 최종 식단의 기준별 판정표
+            llm_calls=llm_calls,
         ),
     }
 
