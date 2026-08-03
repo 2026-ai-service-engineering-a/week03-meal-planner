@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from pipeline.foods import load_foods, select_candidates
 from schemas.meal import DAYS, Meal, MealPlan, PlanRequest
+from schemas.validation import AttemptRecord, PlanResponse, ValidationReport
 
 client = TestClient(app)
 
@@ -27,6 +28,16 @@ def fake_meal_plan() -> MealPlan:
     )
 
 
+def fake_plan_response() -> PlanResponse:
+    report = ValidationReport(passed=True, violations=[])
+    return PlanResponse(
+        meals=fake_meal_plan().meals,
+        report=report,
+        attempts=1,
+        history=[AttemptRecord(attempt=1, passed=True, violations=[])],
+    )
+
+
 def test_health():
     assert client.get("/health").json() == {"status": "ok"}
 
@@ -37,13 +48,16 @@ def test_wrong_type_is_rejected_before_llm():
     assert res.status_code == 422
 
 
-def test_plan_returns_seven_meals(monkeypatch):
-    monkeypatch.setattr("app.main.plan_meals", lambda req, candidates: fake_meal_plan())
+def test_plan_returns_seven_meals_with_report(monkeypatch):
+    monkeypatch.setattr("app.main.run_pipeline", lambda req: fake_plan_response())
     res = client.post("/plan", json={})
     assert res.status_code == 200
     body = res.json()
     assert len(body["meals"]) == 7
     assert {meal["day"] for meal in body["meals"]} == set(DAYS)
+    assert body["report"]["passed"] is True
+    assert body["attempts"] == 1
+    assert body["history"][0]["attempt"] == 1
 
 
 def test_select_candidates_keeps_sodium_traps():

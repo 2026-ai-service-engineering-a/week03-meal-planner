@@ -10,6 +10,7 @@
 
 from llm.client import structured_complete
 from schemas.meal import MealPlan, PlanRequest
+from schemas.validation import Violation
 
 SYSTEM_PROMPT = """너는 식단 계획자다. 저녁 7끼(월~일)를 짠다.
 
@@ -40,7 +41,19 @@ def _candidate_lines(candidates: list[dict]) -> str:
     )
 
 
-def plan_meals(req: PlanRequest, candidates: list[dict]) -> MealPlan:
+def _violation_lines(violations: list[Violation]) -> str:
+    """검증자의 evidence·suggestion 필드가 계획자의 입력 문장이 되는 순간."""
+    return "\n".join(
+        f"- [{v.severity}] {v.day}요일 {v.food_code}: {v.evidence}\n  제안: {v.suggestion}"
+        for v in violations
+    )
+
+
+def plan_meals(
+    req: PlanRequest,
+    candidates: list[dict],
+    violations: list[Violation] | None = None,
+) -> MealPlan:
     system = SYSTEM_PROMPT.format(
         kcal_min=req.kcal_min,
         kcal_max=req.kcal_max,
@@ -52,6 +65,11 @@ def plan_meals(req: PlanRequest, candidates: list[dict]) -> MealPlan:
         user += f"\n요청사항: {req.request}"
     user += f"\n\n후보 목록:\n{_candidate_lines(candidates)}"
 
+    label = ""
+    if violations:
+        label = "(revision)"
+        user += f"\n\n직전 식단에서 다음 위반이 발견됨. 반영해서 다시 계획해라:\n{_violation_lines(violations)}"
+
     return structured_complete(
         "planner",
         MealPlan,
@@ -59,4 +77,5 @@ def plan_meals(req: PlanRequest, candidates: list[dict]) -> MealPlan:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
+        label=label,
     )
