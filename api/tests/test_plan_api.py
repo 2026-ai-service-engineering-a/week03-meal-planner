@@ -1,11 +1,13 @@
 """API 테스트 — LLM 키 없이도 도는 안전망 (LLM 호출은 monkeypatch로 끊는다)."""
 
+import json
+
 from fastapi.testclient import TestClient
 
 from app.main import app
 from pipeline.foods import load_foods, select_candidates
 from schemas.meal import DAYS, Meal, MealPlan, PlanRequest
-from schemas.validation import AttemptRecord, PlanResponse, ValidationReport
+from schemas.validation import AttemptRecord, PlanAudit, PlanResponse, ValidationReport
 
 client = TestClient(app)
 
@@ -28,6 +30,17 @@ def fake_meal_plan() -> MealPlan:
     )
 
 
+def fake_audit() -> PlanAudit:
+    return PlanAudit(
+        constraints=PlanRequest(),
+        meals=[],
+        days_complete=True,
+        rep_counts={},
+        repetition_ok=True,
+        weekly_sodium_mg=0.0,
+    )
+
+
 def fake_plan_response() -> PlanResponse:
     report = ValidationReport(passed=True, violations=[])
     return PlanResponse(
@@ -35,6 +48,7 @@ def fake_plan_response() -> PlanResponse:
         report=report,
         attempts=1,
         history=[AttemptRecord(attempt=1, passed=True, violations=[])],
+        audit=fake_audit(),
     )
 
 
@@ -58,6 +72,34 @@ def test_plan_returns_seven_meals_with_report(monkeypatch):
     assert body["report"]["passed"] is True
     assert body["attempts"] == 1
     assert body["history"][0]["attempt"] == 1
+    assert body["audit"]["days_complete"] is True  # 통과의 근거(감사)가 응답에 실린다
+
+
+def test_config_exposes_models_but_never_keys(monkeypatch):
+    monkeypatch.setenv("PLANNER_MODEL", "openai/gpt-test")
+    monkeypatch.setenv("VALIDATOR_MODEL", "anthropic/claude-test")
+    monkeypatch.setenv("VALIDATOR_FALLBACKS", "gemini/gemini-test, openai/gpt-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
+    body = client.get("/config").json()
+    assert body["planner_model"] == "openai/gpt-test"
+    assert body["validator_model"] == "anthropic/claude-test"
+    assert body["validator_fallbacks"] == ["gemini/gemini-test", "openai/gpt-test"]
+    assert "sk-secret" not in json.dumps(body)  # 키는 절대 응답에 실리지 않는다
+
+
+def test_plan_stream_emits_progress_then_result(monkeypatch):
+    """SSE는 과정 + 결과 — 마지막 data 이벤트가 /plan과 같은 응답이다."""
+
+    def fake_events(req):
+        yield {"event": "progress", "stage": "planner", "detail": "계획자 호출", "max_attempts": 3}
+        yield {"event": "result", "data": fake_plan_response()}
+
+    monkeypatch.setattr("app.main.run_pipeline_events", fake_events)
+    res = client.post("/plan/stream", json={})
+    assert res.status_code == 200
+    events = [json.loads(line[len("data: "):]) for line in res.text.splitlines() if line.startswith("data: ")]
+    assert [e["event"] for e in events] == ["progress", "result"]
+    assert len(events[-1]["data"]["meals"]) == 7
 
 
 def test_select_candidates_keeps_sodium_traps():

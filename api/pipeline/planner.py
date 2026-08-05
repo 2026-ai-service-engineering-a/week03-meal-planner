@@ -9,6 +9,7 @@
 """
 
 from llm.client import structured_complete
+from schemas.llm import LlmCall
 from schemas.meal import MealPlan, PlanRequest
 from schemas.validation import Violation
 
@@ -63,6 +64,7 @@ def plan_meals(
     candidates: list[dict],
     violations: list[Violation] | None = None,
     previous: MealPlan | None = None,
+    recorder: list[LlmCall] | None = None,
 ) -> MealPlan:
     system = SYSTEM_PROMPT.format(
         kcal_min=req.kcal_min,
@@ -95,4 +97,5 @@ def plan_meals(
             {"role": "user", "content": user},
         ],
         label=label,
+        recorder=recorder,
     )

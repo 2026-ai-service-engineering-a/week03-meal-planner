@@ -1,6 +1,6 @@
 """환산·크로스체크 유닛테스트 — LLM 없이 도는 산수의 안전망."""
 
-from pipeline.crosscheck import crosscheck_plan, per_serving, weekly_sodium_mg
+from pipeline.crosscheck import audit_plan, crosscheck_plan, per_serving, weekly_sodium_mg
 from schemas.meal import DAYS, Meal, MealPlan, PlanRequest
 
 FOODS = {
@@ -77,6 +77,27 @@ def test_crosscheck_catches_wrong_conversion():
     meals = [make_meal("월", calories_kcal=128.0)] + [make_meal(day) for day in DAYS[1:]]
     violations = crosscheck_plan(PlanRequest(), MealPlan(meals=meals), FOODS)
     assert any(v.type == "환산_오류" and "calories_kcal" in v.evidence for v in violations)
+
+
+def test_audit_reports_per_criterion_verdicts():
+    """감사는 "통과"의 근거다 — 끼니별 기준 판정과 전체 규칙 판정이 수치와 함께 남는다."""
+    meals = [make_meal(day) for day in DAYS[:1]] + [make_meal("화", "D101-004310000-0001")] + [
+        make_meal(day) for day in DAYS[2:]
+    ]
+    audit = audit_plan(PlanRequest(), MealPlan(meals=meals), FOODS)
+
+    tue = next(m for m in audit.meals if m.day == "화")
+    assert tue.exists and tue.conversion_ok
+    assert tue.kcal == 675.0 and tue.kcal_ok  # 500~800 안
+    assert tue.sodium_mg == 4230.0 and not tue.sodium_ok  # 한도 800 초과
+
+    mon = next(m for m in audit.meals if m.day == "월")
+    assert mon.sodium_ok and mon.kcal_ok and mon.protein_ok
+
+    assert audit.days_complete is True
+    assert audit.rep_counts["비빔밥"] == 6
+    assert audit.repetition_ok is False  # 주 2회 초과
+    assert audit.constraints.sodium_limit_mg == 800
 
 
 def test_crosscheck_catches_nonexistent_food():

@@ -2,9 +2,10 @@
 
 수집 경로 (Open-API 제한과 무관한 파일 다운로드 방식):
   1. https://various.foodsafetykorea.go.kr/nutrient/general/down/historyList.do
-  2. "음식 DB" 엑셀 다운로드 (약 11.35MB, 2만 건 규모)
+  2. "음식 DB" 엑셀을 data/ 폴더에 다운로드 (약 11.35MB, 2만 건 규모)
      — 같은 페이지의 가공식품 DB(187MB, 31만 건)는 4주차의 주인공이다
-  3. uv run --with pandas --with openpyxl python scripts/prepare_data.py <음식DB.xlsx>
+  3. docker compose run --rm prepare-data data/음식DB.xlsx
+     (호스트에 파이썬이 없어도 된다 — pandas·openpyxl은 컨테이너에서 실행 시에만 얹는다)
 
 하는 일:
   - 데이터구분코드 = D (음식) 행만 필터
