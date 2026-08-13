@@ -9,6 +9,7 @@
 """
 
 from llm.client import structured_complete
+from pipeline.foods import load_docs
 from schemas.llm import LlmCall
 from schemas.meal import MealPlan, PlanRequest
 from schemas.validation import Violation
@@ -33,14 +34,29 @@ SYSTEM_PROMPT = """너는 식단 계획자다. 저녁 7끼(월~일)를 짠다.
   나트륨 307mg/100g → 307 × 230 ÷ 100 = 706.1 mg"""
 
 
-def _candidate_lines(candidates: list[dict]) -> str:
-    """후보 목록을 프롬프트에 박는다 — 환각이 억제되는 이유가 이 텍스트다."""
-    return "\n".join(
-        f"[{food['food_code']} {food['food_name']} "
-        f"{food['energy_kcal_100g']}kcal/100g 단백질{food['protein_g_100g']}g "
-        f"나트륨{food['sodium_mg_100g']}mg 1인분{food['serving_g']}g]"
-        for food in candidates
-    )
+# 설명문을 몇 자까지 후보 줄에 실을 것인가. 검색은 500자 전문으로 하고,
+# 프롬프트에는 앞머리만 넣는다. **검색에 쓰는 텍스트와 프롬프트에 넣는 텍스트는
+# 같을 필요가 없다** — 앞은 정확도의 문제이고 뒤는 비용의 문제다
+DOC_SNIPPET = 60
+
+
+def _candidate_lines(candidates: list[dict], docs: dict[str, dict] | None = None) -> str:
+    """후보 목록을 프롬프트에 박는다 — 환각이 억제되는 이유가 이 텍스트다.
+
+    v2.0부터 숫자 옆에 **뜻**이 한 조각 붙는다. 검색이 이미 요청에 가까운 것만
+    골라 왔지만, 고르는 이유(reason)를 쓰려면 모델도 그 음식이 뭔지 알아야 한다.
+    """
+    docs = docs or {}
+    lines = []
+    for food in candidates:
+        line = (f"[{food['food_code']} {food['food_name']} "
+                f"{food['energy_kcal_100g']}kcal/100g 단백질{food['protein_g_100g']}g "
+                f"나트륨{food['sodium_mg_100g']}mg 1인분{food['serving_g']}g]")
+        text = (docs.get(food["food_code"]) or {}).get("text", "")
+        if text:
+            line += " " + text[:DOC_SNIPPET].rstrip()
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _violation_lines(violations: list[Violation]) -> str:
@@ -75,7 +91,7 @@ def plan_meals(
     user = f"조건: {req.kcal_min}~{req.kcal_max}kcal, 나트륨≤{req.sodium_limit_mg}mg, 단백질≥{req.protein_min_g}g"
     if req.request:
         user += f"\n요청사항: {req.request}"
-    user += f"\n\n후보 목록:\n{_candidate_lines(candidates)}"
+    user += f"\n\n후보 목록:\n{_candidate_lines(candidates, load_docs())}"
 
     label = ""
     if violations:
