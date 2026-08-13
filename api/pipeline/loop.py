@@ -12,7 +12,8 @@ from collections.abc import Iterator
 
 from llm.client import log
 from pipeline.crosscheck import audit_plan, crosscheck_plan
-from pipeline.foods import load_foods, select_candidates
+from pipeline.foods import load_foods, load_docs, select_candidates
+from pipeline.retrieval import narrow
 from pipeline.planner import plan_meals
 from pipeline.validator import validate_plan
 from schemas.llm import LlmCall
@@ -63,8 +64,13 @@ def run_pipeline_events(req: PlanRequest) -> Iterator[dict]:
     소비하는 HTTP 연결 안에만 산다. /plan은 결과만, /plan/stream은 과정까지 흘린다.
     """
     foods = load_foods()
-    candidates = select_candidates(req, foods)
-    yield _progress("candidates", f"후보 선별 — {len(foods)}종 중 {len(candidates)}종을 프롬프트에 주입")
+    matched = select_candidates(req, foods)
+    # v2.0: 조건으로 거른 뒤 **요청으로 한 번 더 좁힌다.** 프롬프트에 들어가는
+    # 것은 조건 통과 전부가 아니라 요청에 가까운 K건이다
+    candidates, why = narrow(matched, req.request, req=req)
+    yield _progress("candidates",
+                    f"후보 선별 — {len(foods)}종 중 조건 통과 {len(matched)}종, "
+                    f"프롬프트에 {len(candidates)}종 ({why})")
 
     history: list[AttemptRecord] = []
     violations: list[Violation] = []
