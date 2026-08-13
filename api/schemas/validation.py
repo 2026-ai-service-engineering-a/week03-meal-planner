@@ -60,6 +60,18 @@ class MealAudit(BaseModel):
     sodium_ok: bool
 
 
+class Retrieval(BaseModel):
+    """후보가 어떻게 추려졌는가 — v2.0에서 검색이 끼어든 뒤로 필요해진 기록.
+
+    "모델이 왜 저걸 골랐지"가 두 단계짜리 질문이 됐다. 앞단이 여기 있다.
+    """
+
+    total: int  # 데이터에 있는 음식 종수
+    matched: int  # 조건(열량대)으로 거른 뒤
+    sent: int  # 실제로 프롬프트에 들어간 수
+    why: str  # 무엇으로 어떻게 좁혔는지 한 줄
+
+
 class PlanAudit(BaseModel):
     """식단 전체 감사 — 검증 리포트의 산수 근거."""
 
@@ -69,6 +81,7 @@ class PlanAudit(BaseModel):
     rep_counts: dict[str, int]  # 대표식품별 등장 횟수
     repetition_ok: bool  # 전부 주 2회 이하인가
     weekly_sodium_mg: float
+    retrieval: Retrieval | None = None  # 없으면 v1.5처럼 조건만으로 추린 것이다
 
 
 class PlanResponse(BaseModel):

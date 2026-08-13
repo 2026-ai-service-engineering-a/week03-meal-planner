@@ -18,7 +18,7 @@ from pipeline.planner import plan_meals
 from pipeline.validator import validate_plan
 from schemas.llm import LlmCall
 from schemas.meal import PlanRequest
-from schemas.validation import AttemptRecord, PlanResponse, ValidationReport, Violation
+from schemas.validation import AttemptRecord, PlanResponse, Retrieval, ValidationReport, Violation
 
 MAX_ATTEMPTS = 3  # 루프 가드 — 파이프라인에도 상한이 있다 (2주차 에이전트 루프 가드의 재회)
 
@@ -105,7 +105,12 @@ def run_pipeline_events(req: PlanRequest) -> Iterator[dict]:
             report=report,
             attempts=len(history),
             history=history,
-            audit=audit_plan(req, plan, foods),  # "통과"의 산수 근거 — 최종 식단의 기준별 판정표
+            # "통과"의 산수 근거 — 최종 식단의 기준별 판정표.
+            # v2.0부터 **후보가 어떻게 추려졌는지**도 함께 싣는다. 검색이 끼어든
+            # 뒤로는 "왜 저걸 골랐지"가 두 단계짜리 질문이 됐다
+            audit=audit_plan(req, plan, foods).model_copy(update={
+                "retrieval": Retrieval(total=len(foods), matched=len(matched),
+                                       sent=len(candidates), why=why)}),
             llm_calls=llm_calls,
         ),
     }
