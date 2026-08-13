@@ -36,6 +36,11 @@ from pathlib import Path
 # 프롬프트에 넣을 후보 상한. 7끼를 고르는 데 210건이 필요하지는 않다
 TOP_K = int(os.environ.get("CANDIDATE_TOP_K", "40"))
 
+# 계획자가 7끼를 짜려면 제약을 통과하는 선택지가 최소 이만큼은 손에 있어야 한다.
+# 7끼 + 여유. 되살림에 상한이 없으면 후보가 대부분 통과인 데이터에서 축소가
+# 통째로 무의미해진다 — 테스트가 그걸 먼저 잡았다
+MIN_FEASIBLE = 10
+
 MODEL = os.environ.get("EMBEDDING_MODEL", "gemini/gemini-embedding-001")
 DIM = int(os.environ.get("EMBEDDING_DIM", "768"))
 
@@ -123,23 +128,27 @@ def narrow(candidates: list[dict], request: str, top_k: int = TOP_K,
         return candidates, f"조건 통과 {len(candidates)}건 — 상한 이하라 그대로"
 
     if not request.strip():
-        return _spread(candidates, top_k), f"요청 없음 — 분류별 고르게 {top_k}건"
+        return _rescue(_spread(candidates, top_k), candidates, req,
+                       f"요청 없음 — 분류별 고르게 {top_k}건")
 
     index = load_index()
     if index is None:
-        return _spread(candidates, top_k), f"벡터 파일 없음 — 분류별 고르게 {top_k}건"
+        return _rescue(_spread(candidates, top_k), candidates, req,
+                       f"벡터 파일 없음 — 분류별 고르게 {top_k}건")
 
     codes, rows, _dim = index
     try:
         query = embed_query(request.strip())
     except Exception as exc:  # noqa: BLE001 — 키가 없거나 API가 죽어도 식단은 나와야 한다
-        return _spread(candidates, top_k), f"질의 임베딩 실패({type(exc).__name__}) — 분류별 {top_k}건"
+        return _rescue(_spread(candidates, top_k), candidates, req,
+                       f"질의 임베딩 실패({type(exc).__name__}) — 분류별 {top_k}건")
 
     position = {code: i for i, code in enumerate(codes)}
     pool = [(food, position[food["food_code"]]) for food in candidates
             if food["food_code"] in position]
     if not pool:
-        return _spread(candidates, top_k), f"색인에 없는 후보들 — 분류별 고르게 {top_k}건"
+        return _rescue(_spread(candidates, top_k), candidates, req,
+                       f"색인에 없는 후보들 — 분류별 고르게 {top_k}건")
 
     # 정규화된 벡터끼리의 내적이 곧 코사인이다. 500건이면 전수 비교가 그냥 된다 —
     # 근사 색인도, 벡터 DB도, numpy도 없이
@@ -148,16 +157,29 @@ def narrow(candidates: list[dict], request: str, top_k: int = TOP_K,
         key=lambda pair: -pair[0],
     )[:top_k]
     picked = [food for _, food in scored]
-    note = (f"'{request.strip()}'로 {len(candidates)}건 → {len(picked)}건 "
-            f"(유사도 {scored[0][0]:.3f}~{scored[-1][0]:.3f})")
+    return _rescue(picked, candidates, req,
+                   f"'{request.strip()}'로 {len(candidates)}건 → {len(picked)}건 "
+                   f"(유사도 {scored[0][0]:.3f}~{scored[-1][0]:.3f})")
 
-    # 검색이 떨어뜨린 것 중 **제약을 통과하는 것**은 되살린다. 유사도가 낮아도
-    # 계획자가 고를 수 있는 몇 안 되는 선택지라, 빠지면 목록이 통째로 무용해진다
-    if req is not None:
-        have = {food["food_code"] for food in picked}
-        rescued = [food for food in candidates
-                   if food["food_code"] not in have and feasible(food, req)]
-        if rescued:
-            picked.extend(rescued)
-            note += f" + 제약 통과분 {len(rescued)}건 되살림"
+
+def _rescue(picked: list[dict], candidates: list[dict], req,
+            note: str) -> tuple[list[dict], str]:
+    """추려낸 것 중 **제약을 통과하는 것**은 무조건 되살린다.
+
+    처음에는 이 되살림이 검색 경로에만 걸려 있었다. 벡터 파일이 없거나 질의
+    임베딩이 실패하면 강등 경로로 빠지는데, 거기서는 제약 통과분이 빠졌다.
+    A/B를 재보다 발견했다 — 검색을 끈 쪽이 진 이유가 "검색이 없어서"가 아니라
+    "되살림이 없어서"였다. **강등 경로에서만 나빠지는 결함은 평소에 안 보인다.**
+    """
+    if req is None:
+        return picked, note
+    have = {food["food_code"] for food in picked}
+    short = MIN_FEASIBLE - sum(1 for food in picked if feasible(food, req))
+    if short <= 0:
+        return picked, note  # 이미 충분히 들어 있다
+    rescued = [food for food in candidates
+               if food["food_code"] not in have and feasible(food, req)][:short]
+    if rescued:
+        picked = picked + rescued
+        note += f" + 제약 통과분 {len(rescued)}건 되살림"
     return picked, note
