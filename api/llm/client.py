@@ -138,6 +138,7 @@ def structured_complete[T: BaseModel](
     messages: list[dict],
     label: str = "",
     recorder: list[LlmCall] | None = None,
+    validation_context: dict | None = None,
 ) -> T:
     """역할의 모델 체인으로 structured output을 받는다. 프로바이더가 죽으면 폴백.
 
@@ -162,6 +163,12 @@ def structured_complete[T: BaseModel](
                 response_model=response_model,
                 messages=messages,
                 max_retries=MAX_SCHEMA_RETRIES,
+                # 스키마의 model_validator가 이 값을 본다. 후보 목록 밖의 코드를
+                # 검증 오류로 만들면 instructor가 오류를 담아 다시 묻는다.
+                #   인자 이름은 `context`다. `validation_context`로 주면 instructor가
+                #   모르는 kwarg라 그대로 프로바이더에 실려 나가고, "Object of type
+                #   set is not JSON serializable"이라는 엉뚱한 오류가 난다
+                **({"context": validation_context} if validation_context else {}),
                 **_reasoning(role),
             )
             _log_usage(role, model, completion)
