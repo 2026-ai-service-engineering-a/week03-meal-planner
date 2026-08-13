@@ -12,3 +12,6 @@ __pycache__/
 
 # 데이터 원본 (K-FIND 엑셀 다운로드 파일) — 스냅샷(foods.json)만 커밋한다
 data/*.xlsx
+
+# 위키백과 응답 캐시 — 재실행을 공짜로 만드는 자리지만 산출물은 아니다
+data/.wiki_cache.json

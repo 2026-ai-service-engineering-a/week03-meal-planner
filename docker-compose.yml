@@ -29,6 +29,20 @@ services:
     entrypoint:
       ["uv", "run", "--with", "pandas", "--with", "openpyxl", "python", "scripts/prepare_data.py"]
 
+  # v2.0이 더한 도구. foods.json의 500종에 위키백과 설명문을 붙인다.
+  #   네트워크만 쓰고 LLM도 키도 필요 없다 — 그래서 제일 싼 단계다.
+  #   docker compose run --rm enrich-foods
+  enrich-foods:
+    profiles: ["tools"]
+    build: ./api
+    env_file:
+      - path: .env
+        required: false # 위키백과 단계는 키 없이 돈다. --llm-fallback만 키가 필요하다
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - ./data:/app/data
+    entrypoint: ["uv", "run", "--no-sync", "python", "scripts/enrich_foods.py"]
+
   ui:
     build: ./ui
     container_name: meal-planner-ui
