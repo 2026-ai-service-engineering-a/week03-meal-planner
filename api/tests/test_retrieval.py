@@ -87,3 +87,20 @@ def test_feasible_matches_the_constraint_arithmetic():
     assert retrieval.feasible(soup, REQ) is False  # 단백질 28.8g은 넘지만 나트륨 1,134mg
     lean = food("L", "고등어구이", "구이류", 340, 23.4, 126, serving=200)
     assert retrieval.feasible(lean, REQ) is True
+
+
+def test_rescue_also_runs_on_the_degraded_path(monkeypatch):
+    """**강등 경로에서만 나빠지는 결함은 평소에 안 보인다.**
+
+    되살림이 검색 경로에만 걸려 있었다. 벡터 파일이 없으면 분류별 샘플로
+    강등되는데, 거기서는 제약 통과분이 빠졌다. A/B를 재보다 발견했다 —
+    검색을 끈 쪽이 진 이유가 검색이 없어서가 아니라 되살림이 없어서였다.
+    """
+    monkeypatch.setattr(retrieval, "load_index", lambda: None)
+    # 같은 분류의 맨 뒤에 둔다. 분류별 샘플은 앞에서부터 뽑으므로 여기서 잘린다
+    salty = [food(f"X{i}", f"짠음식{i}", "국 및 탕류", 600, 30, 5000) for i in range(60)]
+    winner = food("WIN", "저염국", "국 및 탕류", 600, 30, 500)
+
+    picked, why = retrieval.narrow(salty + [winner], "국물", top_k=5, req=REQ)
+    assert winner in picked, "강등 경로에서 제약 통과분이 빠졌다"
+    assert "되살림" in why
