@@ -118,12 +118,27 @@ def _log_usage(role: str, model: str, response) -> None:
     )
 
 
+def _reasoning(role: str) -> dict:
+    """추론 모델의 생각 길이 손잡이 — <ROLE>_REASONING_EFFORT.
+
+    이 손잡이를 아는 것이 이번 주 실측에서 나왔다. 계획자의 프롬프트를 절반으로
+    줄여도(후보 210건 → 40건, 설명문 제거) 응답 시간은 그대로였다. 입력이 아니라
+    **출력이 병목**이었고, 출력 대부분이 추론 토큰이었기 때문이다.
+
+    비어 있으면 아무것도 안 보낸다 — 모델이 정한 기본값을 쓴다. 추론 모델이
+    아닌 모델에 이 값을 보내면 오류가 나므로, 켜는 것은 명시적 선택이어야 한다.
+    """
+    effort = os.environ.get(f"{role.upper()}_REASONING_EFFORT", "").strip()
+    return {"reasoning_effort": effort} if effort else {}
+
+
 def structured_complete[T: BaseModel](
     role: str,
     response_model: type[T],
     messages: list[dict],
     label: str = "",
     recorder: list[LlmCall] | None = None,
+    validation_context: dict | None = None,
 ) -> T:
     """역할의 모델 체인으로 structured output을 받는다. 프로바이더가 죽으면 폴백.
 
@@ -148,6 +163,13 @@ def structured_complete[T: BaseModel](
                 response_model=response_model,
                 messages=messages,
                 max_retries=MAX_SCHEMA_RETRIES,
+                # 스키마의 model_validator가 이 값을 본다. 후보 목록 밖의 코드를
+                # 검증 오류로 만들면 instructor가 오류를 담아 다시 묻는다.
+                #   인자 이름은 `context`다. `validation_context`로 주면 instructor가
+                #   모르는 kwarg라 그대로 프로바이더에 실려 나가고, "Object of type
+                #   set is not JSON serializable"이라는 엉뚱한 오류가 난다
+                **({"context": validation_context} if validation_context else {}),
+                **_reasoning(role),
             )
             _log_usage(role, model, completion)
             if recorder is not None:
