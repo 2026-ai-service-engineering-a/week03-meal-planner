@@ -42,6 +42,29 @@ curl -s localhost:8000/plan -X POST -H 'Content-Type: application/json' \
   -d '{"kcal_min":500,"kcal_max":800,"sodium_limit_mg":800,"protein_min_g":25,"request":""}' | jq
 ```
 
+## v2.0: 요청으로 후보를 좁힌다 (RAG)
+
+v1.5까지는 조건에 맞는 후보 210건을 통째로 프롬프트에 넣었다. 후보 목록만
+27,250자다. v2.0은 그 앞에 검색을 한 겹 둔다.
+
+```sh
+docker compose run --rm enrich-foods --llm-fallback   # 500종에 설명문 (위키백과 287 + LLM 213)
+docker compose run --rm embed-foods                   # 설명문 → 벡터 1.5MB
+docker compose up                                     # 끝. 벡터 DB는 없다
+```
+
+산출물(`data/food_docs.json` · `data/food_vectors.bin`)은 저장소에 커밋돼 있어서,
+**받는 사람은 위 두 줄을 돌릴 필요가 없다.** 1.5MB는 git에 들어간다.
+
+| | v1.5 | v2.0 |
+| --- | --- | --- |
+| 프롬프트 후보 | 210건 · 27,250자 | 46건 · 5,852자 |
+| 입력 토큰 | 21,888 | 7,234 |
+| "국물 요리 위주로" 결과 | 햄버거·샌드위치·초밥 | 오리죽·콩국수·냉면 |
+
+`CANDIDATE_TOP_K=9999`로 띄우면 검색이 사실상 꺼져 v1.5와 같은 동작이 된다.
+전후 비교를 코드 수정 없이 할 수 있다.
+
 ## API 키 준비
 
 계획자·검증자를 다른 회사로 교차시키는 것이 이번 주의 핵심이라, 3개 중

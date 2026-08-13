@@ -174,6 +174,15 @@ m1.metric("검증", "통과 ✅" if report.get("passed") else "미통과 ⚠️"
 m2.metric("시도 횟수", f"{attempts}회")
 m3.metric("남은 위반", f"{len(report.get('violations', []))}건")
 
+# 후보가 어떻게 추려졌는지 — v2.0에서 검색이 끼어든 뒤로 필요해진 줄.
+# "모델이 왜 저걸 골랐나"의 앞단이 여기 있다
+retrieval = (data.get("audit") or {}).get("retrieval")
+if retrieval:
+    st.caption(
+        f"후보 {retrieval['total']}종 → 조건 통과 {retrieval['matched']}종 "
+        f"→ 프롬프트에 {retrieval['sent']}종 · {retrieval['why']}"
+    )
+
 # 통과가 "감상"이 아니라 무엇을 확인한 결과인지 — audit(코드 재계산 근거) 요약
 audit = data.get("audit")
 if audit:

@@ -12,12 +12,13 @@ from collections.abc import Iterator
 
 from llm.client import log
 from pipeline.crosscheck import audit_plan, crosscheck_plan
-from pipeline.foods import load_foods, select_candidates
+from pipeline.foods import load_foods, load_docs, select_candidates
+from pipeline.retrieval import narrow
 from pipeline.planner import plan_meals
 from pipeline.validator import validate_plan
 from schemas.llm import LlmCall
 from schemas.meal import PlanRequest
-from schemas.validation import AttemptRecord, PlanResponse, ValidationReport, Violation
+from schemas.validation import AttemptRecord, PlanResponse, Retrieval, ValidationReport, Violation
 
 MAX_ATTEMPTS = 3  # 루프 가드 — 파이프라인에도 상한이 있다 (2주차 에이전트 루프 가드의 재회)
 
@@ -63,8 +64,13 @@ def run_pipeline_events(req: PlanRequest) -> Iterator[dict]:
     소비하는 HTTP 연결 안에만 산다. /plan은 결과만, /plan/stream은 과정까지 흘린다.
     """
     foods = load_foods()
-    candidates = select_candidates(req, foods)
-    yield _progress("candidates", f"후보 선별 — {len(foods)}종 중 {len(candidates)}종을 프롬프트에 주입")
+    matched = select_candidates(req, foods)
+    # v2.0: 조건으로 거른 뒤 **요청으로 한 번 더 좁힌다.** 프롬프트에 들어가는
+    # 것은 조건 통과 전부가 아니라 요청에 가까운 K건이다
+    candidates, why = narrow(matched, req.request, req=req)
+    yield _progress("candidates",
+                    f"후보 선별 — {len(foods)}종 중 조건 통과 {len(matched)}종, "
+                    f"프롬프트에 {len(candidates)}종 ({why})")
 
     history: list[AttemptRecord] = []
     violations: list[Violation] = []
@@ -99,7 +105,12 @@ def run_pipeline_events(req: PlanRequest) -> Iterator[dict]:
             report=report,
             attempts=len(history),
             history=history,
-            audit=audit_plan(req, plan, foods),  # "통과"의 산수 근거 — 최종 식단의 기준별 판정표
+            # "통과"의 산수 근거 — 최종 식단의 기준별 판정표.
+            # v2.0부터 **후보가 어떻게 추려졌는지**도 함께 싣는다. 검색이 끼어든
+            # 뒤로는 "왜 저걸 골랐지"가 두 단계짜리 질문이 됐다
+            audit=audit_plan(req, plan, foods).model_copy(update={
+                "retrieval": Retrieval(total=len(foods), matched=len(matched),
+                                       sent=len(candidates), why=why)}),
             llm_calls=llm_calls,
         ),
     }
